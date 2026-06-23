@@ -79,7 +79,8 @@
   import { MAP, MAP_W, MAP_H, castRay, moveWithCollision } from "./src/engine.js";
   import { stepZombie } from "./src/game.js";
   import { WEAPONS, fire as fireWeapon, startReload, tickReload } from "./src/weapons.js";
-  import { resolveShot } from "./src/shooting.js";
+  import { resolveShot, shootRay } from "./src/shooting.js";
+  import { isHeadshot } from "./src/hitzones.js";
   import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
   import { earn } from "./src/economy.js";
   import { projectSprites, projectSprite } from "./src/sprites.js";
@@ -135,7 +136,7 @@
   const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
 
   // ---- Mutable game state (player matches the frozen GameState contract) ----
-  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, hitMarker, nowMs;
+  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
   let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
@@ -161,6 +162,7 @@
     gameOver = false;
     muzzleFlash = 0;
     hitMarker = 0;
+    headshotFlash = 0;
     nowMs = 0;
     trauma = 0; popups = []; blood = []; sparks = [];
     hitFlash = {}; corpses = []; bobPhase = 0; recoil = 0; moving = false;
@@ -266,27 +268,34 @@
           muzzleFlash = 0.05;
           recoil = 1;                             // weapon kick + crosshair bloom
           trauma = Math.min(1, trauma + 0.16);    // every shot kicks the camera a little
-          const res = resolveShot(MAP, player, zombies, weapon, aimAngle);
-          if (res.scoreDelta > 0) {
-            // Find the zombie this hitscan shot damaged (single target) to place its juice.
-            let hz = null;
-            for (const z of res.zombies) {
-              const before = zombies.find((q) => q.id === z.id);
-              if (before && z.hp < before.hp) { hz = z; break; }
-            }
+          // Pre-resolve the target so the crosshair's vertical aim decides a headshot
+          // BEFORE damage lands (resolveShot needs the boolean to double damage).
+          // shootRay (src/shooting.js) picks WHICH zombie; isHeadshot (src/hitzones.js)
+          // judges WHERE on it the crosshair sits — index.html just wires them together.
+          const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
+          const target = shootRay(MAP, player.x, player.y, ca, sa, zombies);
+          let headshot = false;
+          if (target) {
+            const tp = projectSprite(player, FOV, W, H, target.zombie);
+            if (tp.visible) headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
+          }
+          const res = resolveShot(MAP, player, zombies, weapon, aimAngle, { headshot });
+          if (res.hitId != null) {
+            // res.hitId names the exact zombie the bullet struck — no hp-diff guessing.
+            const hz = res.zombies.find((z) => z.id === res.hitId);
             if (hz) {
               hitFlash[hz.id] = nowMs;                                // white flash on the hit
               blood = spawnBloodPuff(blood, hz.x, hz.y);              // spray at the world hit
               const pr = projectSprite(player, FOV, W, H, hz);
               if (pr.visible) popups = spawnPopup(popups, pr.screenX, pr.drawStartY, res.scoreDelta);
               if (res.killedId != null) corpses.push({ x: hz.x, y: hz.y, bornMs: nowMs });
-              trauma = Math.min(1, trauma + (res.killedId != null ? 0.3 : 0.12));
+              trauma = Math.min(1, trauma + (res.killedId != null ? 0.3 : 0.12) + (res.headshot ? 0.1 : 0));
             }
+            if (res.headshot) headshotFlash = 0.6;   // gold crosshair X + "HEADSHOT" cue
             player = earn(player, res.scoreDelta);
             hitMarker = 0.12;
           } else {
             // Missed every zombie → the bullet bites a wall; spark where it lands.
-            const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
             const wh = castRay(MAP, player.x, player.y, ca, sa);
             const d = Math.min(wh.perpWallDist, MAX_VIEW);
             sparks = spawnSpark(sparks, player.x + ca * d, player.y + sa * d);
@@ -331,6 +340,7 @@
     for (const id in hitFlash) if (nowMs - hitFlash[id] > 200) delete hitFlash[id];
     if (muzzleFlash > 0) muzzleFlash -= dt;
     if (hitMarker > 0) hitMarker -= dt;
+    if (headshotFlash > 0) headshotFlash -= dt;
     if (isGameOver(player)) endGame();
   }
 
@@ -549,14 +559,24 @@
     ctx.stroke();
     ctx.fillStyle = "rgba(230,235,245,0.9)";
     ctx.fillRect(cx, cy, 1, 1);               // centre dot
-    if (hitMarker > 0) {                      // brief red X when a shot connects
-      ctx.strokeStyle = "rgba(255,80,80,0.95)";
+    if (hitMarker > 0) {                      // brief X when a shot connects
+      ctx.strokeStyle = headshotFlash > 0     // gold for headshots, red for body hits
+        ? "rgba(255,210,70,0.97)"
+        : "rgba(255,80,80,0.95)";
       ctx.beginPath();
       ctx.moveTo(cx - 7, cy - 7); ctx.lineTo(cx - 3, cy - 3);
       ctx.moveTo(cx + 7, cy - 7); ctx.lineTo(cx + 3, cy - 3);
       ctx.moveTo(cx - 7, cy + 7); ctx.lineTo(cx - 3, cy + 3);
       ctx.moveTo(cx + 7, cy + 7); ctx.lineTo(cx + 3, cy + 3);
       ctx.stroke();
+    }
+    if (headshotFlash > 0) {                   // gold "HEADSHOT" cue floating above the reticle
+      const a = Math.min(1, headshotFlash / 0.6);
+      ctx.font = "bold 10px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,210,70," + a.toFixed(3) + ")";
+      ctx.fillText("HEADSHOT", cx, cy - 16);
+      ctx.textAlign = "left";
     }
   }
 
