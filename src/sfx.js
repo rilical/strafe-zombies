@@ -176,10 +176,10 @@ export function adsr({ attack, decay, sustain, release, peak = 1 }, dur) {
  * @returns {{ dur: number, layers: Array }} Plain Voice plan for the renderer
  */
 export function buildVoice(name, rng = Math.random) {
-  const preset = SFX[name];
-  if (!preset) {
+  if (!Object.hasOwn(SFX, name)) {
     throw new RangeError(`Unknown SFX preset: ${name}`);
   }
+  const preset = SFX[name];
 
   const pitchScale = preset.pitchVariance
     ? 1 + (rng() - 0.5) * preset.pitchVariance

@@ -112,6 +112,7 @@ describe("buildVoice", () => {
 
   it("throws RangeError for unknown sound names", () => {
     expect(() => buildVoice("missing")).toThrow(RangeError);
+    expect(() => buildVoice("toString")).toThrow(RangeError);
   });
 
   it("returns new objects and mutable arrays on each call", () => {
