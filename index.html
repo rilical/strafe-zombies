@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>STRAFE — raycaster baseplate</title>
+<title>STRAFE — Nacht (MVP kill loop)</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #screen {
@@ -11,82 +11,237 @@
     width: 100vw; height: 100vh;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
+    cursor: crosshair;
   }
   #hud {
     position: fixed; top: 10px; left: 12px;
-    font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
     color: #b9f; text-shadow: 0 1px 2px #000; pointer-events: none;
   }
+  #hud b { color: #ffd54a; }
   #hint {
     position: fixed; bottom: 12px; left: 0; right: 0; text-align: center;
     font: 12px ui-monospace, monospace; color: #89a; text-shadow: 0 1px 2px #000;
     pointer-events: none;
   }
+  #overlay {
+    position: fixed; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    background: rgba(25, 0, 0, 0.55);
+    color: #e44; font: 700 30px ui-monospace, monospace; text-shadow: 0 2px 6px #000;
+    letter-spacing: 2px;
+  }
+  #overlay.show { display: flex; }
+  #overlay small { color: #d9b3b3; font-weight: 400; font-size: 14px; letter-spacing: 0; }
 </style>
 </head>
 <body>
   <canvas id="screen" width="320" height="200"></canvas>
   <div id="hud"></div>
-  <div id="hint">W/S move &nbsp;·&nbsp; A/D turn &nbsp;·&nbsp; Q/E strafe</div>
+  <div id="hint">WASD move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp; click shoot &nbsp;·&nbsp; R reload</div>
+  <div id="overlay"></div>
 
   <script type="module">
+  // ---------------------------------------------------------------------------
+  // index.html is the *integration layer*: input, rendering, and the game loop.
+  // It contains NO game rules — every rule (chase, fire cadence, hit detection,
+  // damage, scoring, projection) lives in the unit-tested pure modules in src/.
+  // This file only wires those functions to the canvas and keyboard/mouse.
+  // ---------------------------------------------------------------------------
   import { MAP, MAP_W, MAP_H, castRay, moveWithCollision } from "./src/engine.js";
+  import { stepZombie } from "./src/game.js";
+  import { WEAPONS, fire as fireWeapon, startReload, tickReload } from "./src/weapons.js";
+  import { resolveShot } from "./src/shooting.js";
+  import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
+  import { earn } from "./src/economy.js";
+  import { projectSprites } from "./src/sprites.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
   const W = canvas.width, H = canvas.height;
   const hud = document.getElementById("hud");
+  const overlay = document.getElementById("overlay");
 
-  // Player state (map units + heading in radians).
-  let posX = 2.5, posY = 2.5, angle = 0.4;
+  // ---- Tunables (MVP integration config; round/level scaling arrives with those modules) ----
   const FOV = 0.66;            // camera-plane half-width (~66° field of view)
-  const MOVE = 2.6;            // units / second
-  const TURN = 2.4;            // radians / second
+  const MOVE = 2.8;            // player units / second
+  const TURN = 2.6;            // arrow-key turn radians / second (mouse also turns)
+  const MOUSE_SENS = 0.0022;   // radians per pixel of mouse movement
   const MAX_VIEW = 16;         // distance fog falls off over this many cells
 
-  // Base colors per wall type; index 0 unused.
+  const ZOMBIE_HP = 150;       // MVP placeholder until rounds.js scales HP per round
+  const ZOMBIE_SPEED = 1.15;   // map cells / second (slower than the player, so you can kite)
+  const CONTACT_RANGE = 0.6;   // how close a zombie must be to claw you
+  const CONTACT_DAMAGE = 50;   // spec: two claws down a 100-HP player (survival owns the math)
+  const HIT_COOLDOWN_MS = 750; // per-zombie delay between claws
+  const SPAWN_POINTS = [
+    { x: 13.5, y: 1.5 }, { x: 13.5, y: 13.5 }, { x: 1.5, y: 10.5 },
+    { x: 8.5, y: 13.5 }, { x: 5.5, y: 13.5 },
+  ];
+  const MAX_ALIVE = 5;
+  const SPAWN_INTERVAL = 2.2;  // seconds between spawns while under the cap
+
   const WALL_COLORS = [null, [176, 58, 58], [70, 120, 70], [70, 100, 150]];
+  const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
 
-  const keys = Object.create(null);
-  addEventListener("keydown", (e) => { keys[e.code] = true; });
-  addEventListener("keyup", (e) => { keys[e.code] = false; });
+  // ---- Mutable game state (player matches the frozen GameState contract) ----
+  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, nowMs;
 
-  function update(dt) {
-    if (keys.KeyA || keys.ArrowLeft) angle -= TURN * dt;
-    if (keys.KeyD || keys.ArrowRight) angle += TURN * dt;
-
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    let mx = 0, my = 0;
-    if (keys.KeyW || keys.ArrowUp)   { mx += dirX; my += dirY; }
-    if (keys.KeyS || keys.ArrowDown) { mx -= dirX; my -= dirY; }
-    if (keys.KeyQ) { mx += dirY; my -= dirX; }   // strafe left
-    if (keys.KeyE) { mx -= dirY; my += dirX; }   // strafe right
-
-    const len = Math.hypot(mx, my);
-    if (len > 0) {
-      mx = (mx / len) * MOVE * dt;
-      my = (my / len) * MOVE * dt;
-      const p = moveWithCollision(MAP, posX, posY, mx, my);
-      posX = p.x; posY = p.y;
-    }
+  function freshPlayer() {
+    const w = WEAPONS.m1911;
+    return {
+      x: 2.5, y: 2.5, angle: 0.4,
+      hp: 100, maxHp: 100, points: 500,
+      weapon: "m1911",
+      ammo: { m1911: { mag: w.magSize, reserve: w.reserve } },
+      lastShotMs: undefined, reloadTimer: undefined, lastDamageMs: -1e9,
+      perks: new Set(),
+    };
   }
 
+  function reset() {
+    player = freshPlayer();
+    zombies = [];
+    nextZombieId = 1;
+    spawnTimer = 0.5;
+    gameOver = false;
+    muzzleFlash = 0;
+    nowMs = 0;
+    overlay.classList.remove("show");
+  }
+  reset();
+
+  // ---- Input ----
+  const keys = Object.create(null);
+  addEventListener("keydown", (e) => {
+    keys[e.code] = true;
+    if (e.code === "KeyR" && !gameOver) tryStartReload();
+    if (e.code === "Enter" && gameOver) reset();
+  });
+  addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  // Trigger discipline lives here (input glue): auto weapons fire while held,
+  // semi-autos fire once per click. weapons.fire still enforces the rpm cadence.
+  let triggerHeld = false, triggerEdge = false;
+  canvas.addEventListener("mousedown", () => {
+    if (gameOver) { reset(); return; }
+    if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+    triggerHeld = true; triggerEdge = true;
+  });
+  addEventListener("mouseup", () => { triggerHeld = false; });
+  document.addEventListener("mousemove", (e) => {
+    if (document.pointerLockElement === canvas) player.angle += e.movementX * MOUSE_SENS;
+  });
+
+  // ---- Weapon-state composition seam (per docs/agents/README.md) ----
+  // weapons.* operate on a flat { id, mag, reserve, reloadTimer, lastShotMs };
+  // compose it from the player, run the module, then write the fields back.
+  function composeWeapon() {
+    const a = player.ammo[player.weapon];
+    return { id: player.weapon, mag: a.mag, reserve: a.reserve,
+             reloadTimer: player.reloadTimer, lastShotMs: player.lastShotMs };
+  }
+  function writeWeapon(s) {
+    player = {
+      ...player,
+      ammo: { ...player.ammo, [player.weapon]: { mag: s.mag, reserve: s.reserve } },
+      reloadTimer: s.reloadTimer, lastShotMs: s.lastShotMs,
+    };
+  }
+  function tryStartReload() { writeWeapon(startReload(composeWeapon(), nowMs)); }
+
+  // ---- Simulation: fixed timestep. All rules come from the imported modules. ----
+  function simulate(dt) {
+    nowMs += dt * 1000;
+
+    // Player movement: WASD (forward/back + strafe); arrows still turn as a fallback.
+    if (keys.ArrowLeft) player = { ...player, angle: player.angle - TURN * dt };
+    if (keys.ArrowRight) player = { ...player, angle: player.angle + TURN * dt };
+    const dirX = Math.cos(player.angle), dirY = Math.sin(player.angle);
+    let mx = 0, my = 0;
+    if (keys.KeyW) { mx += dirX; my += dirY; }
+    if (keys.KeyS) { mx -= dirX; my -= dirY; }
+    if (keys.KeyA) { mx += dirY; my -= dirX; }   // strafe left
+    if (keys.KeyD) { mx -= dirY; my += dirX; }   // strafe right
+    const len = Math.hypot(mx, my);
+    if (len > 0) {
+      const p = moveWithCollision(MAP, player.x, player.y,
+        (mx / len) * MOVE * dt, (my / len) * MOVE * dt);
+      player = { ...player, x: p.x, y: p.y };
+    }
+
+    // Reload progress (completes once weapons' internal timer elapses).
+    writeWeapon(tickReload(composeWeapon(), nowMs));
+
+    // Firing: weapons.fire gates cadence/ammo; shooting.resolveShot picks the target.
+    const weapon = WEAPONS[player.weapon];
+    const wantFire = weapon.auto ? triggerHeld : triggerEdge;
+    triggerEdge = false;
+    if (wantFire) {
+      const { state, didFire } = fireWeapon(composeWeapon(), nowMs);
+      if (didFire) {
+        writeWeapon(state);
+        muzzleFlash = 0.05;
+        const res = resolveShot(MAP, player, zombies, weapon);
+        zombies = res.zombies;
+        if (res.scoreDelta > 0) player = earn(player, res.scoreDelta);
+        zombies = zombies.filter((z) => z.hp > 0);
+      }
+    }
+
+    // Zombies chase, decay their claw cooldown, then claw the player on contact.
+    zombies = zombies.map((z) => {
+      const moved = stepZombie(MAP, z, player, dt, z.speed);
+      return { ...moved, hitCooldown: Math.max(0, (z.hitCooldown || 0) - dt * 1000) };
+    });
+    for (let i = 0; i < zombies.length; i++) {
+      const z = zombies[i];
+      if (z.hitCooldown <= 0 && Math.hypot(z.x - player.x, z.y - player.y) < CONTACT_RANGE) {
+        player = applyContactDamage(player, CONTACT_DAMAGE, nowMs);
+        zombies[i] = { ...z, hitCooldown: HIT_COOLDOWN_MS };
+      }
+    }
+
+    // Passive health regen (survival owns the 2s-delay / 3s-refill curve).
+    player = regen(player, nowMs);
+
+    // Trickle spawner (placeholder until rounds.js drives real waves).
+    spawnTimer -= dt;
+    if (spawnTimer <= 0 && zombies.length < MAX_ALIVE) {
+      spawnTimer = SPAWN_INTERVAL;
+      const s = SPAWN_POINTS[(Math.random() * SPAWN_POINTS.length) | 0];
+      zombies.push({ id: nextZombieId++, x: s.x, y: s.y, angle: 0,
+                     hp: ZOMBIE_HP, speed: ZOMBIE_SPEED, state: "chase", hitCooldown: 0 });
+    }
+
+    if (muzzleFlash > 0) muzzleFlash -= dt;
+    if (isGameOver(player)) endGame();
+  }
+
+  function endGame() {
+    gameOver = true;
+    document.exitPointerLock?.();
+    overlay.innerHTML = "YOU DIED<small>Score " + player.points +
+      " · click or press Enter to restart</small>";
+    overlay.classList.add("show");
+  }
+
+  // ---- Render ----
+  const zbuffer = new Float64Array(W);   // per-column wall depth, for sprite occlusion
+
   function render() {
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const dirX = Math.cos(player.angle), dirY = Math.sin(player.angle);
     const planeX = -dirY * FOV, planeY = dirX * FOV;
 
-    // Ceiling and floor.
-    ctx.fillStyle = "#15151b"; ctx.fillRect(0, 0, W, H / 2);
-    ctx.fillStyle = "#2c2c30"; ctx.fillRect(0, H / 2, W, H / 2);
+    ctx.fillStyle = "#15151b"; ctx.fillRect(0, 0, W, H / 2);   // ceiling
+    ctx.fillStyle = "#2c2c30"; ctx.fillRect(0, H / 2, W, H / 2); // floor
 
-    // Wall columns.
     for (let x = 0; x < W; x++) {
       const cameraX = (2 * x) / W - 1;
-      const rayDirX = dirX + planeX * cameraX;
-      const rayDirY = dirY + planeY * cameraX;
-
-      const hit = castRay(MAP, posX, posY, rayDirX, rayDirY);
+      const hit = castRay(MAP, player.x, player.y,
+        dirX + planeX * cameraX, dirY + planeY * cameraX);
       const dist = Math.max(hit.perpWallDist, 0.0001);
+      zbuffer[x] = dist;
 
       const lineHeight = Math.floor(H / dist);
       let drawStart = Math.floor(-lineHeight / 2 + H / 2);
@@ -95,52 +250,123 @@
       if (drawEnd > H) drawEnd = H;
 
       const base = WALL_COLORS[hit.wall] || WALL_COLORS[1];
-      const sideMul = hit.side === 1 ? 0.65 : 1;          // fake directional light
-      const fog = Math.max(0.15, 1 - dist / MAX_VIEW);     // darken with distance
-      const k = sideMul * fog;
-      ctx.fillStyle =
-        "rgb(" + ((base[0] * k) | 0) + "," + ((base[1] * k) | 0) + "," + ((base[2] * k) | 0) + ")";
+      const k = (hit.side === 1 ? 0.65 : 1) * Math.max(0.15, 1 - dist / MAX_VIEW);
+      ctx.fillStyle = rgb(base[0] * k, base[1] * k, base[2] * k);
       ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
     }
 
+    drawZombies();
+    drawWeapon();
+    if (nowMs - player.lastDamageMs < 350) drawHurt();
+    drawCrosshair();
     drawMinimap();
+  }
+
+  // Billboard zombies via sprites.projectSprites, depth-clipped per column.
+  function drawZombies() {
+    for (const p of projectSprites(player, FOV, W, H, zombies)) {
+      const h = p.drawEndY - p.drawStartY;
+      const fullW = p.scale * 0.55;
+      const left = Math.floor(p.screenX - fullW / 2);
+      const right = Math.ceil(p.screenX + fullW / 2);
+      const fog = Math.max(0.2, 1 - p.depth / MAX_VIEW);
+      const topBody = p.drawStartY + h * 0.28;
+      for (let x = left; x < right; x++) {
+        if (x < 0 || x >= W || p.depth >= zbuffer[x]) continue;   // wall occludes
+        const u = (right === left) ? 0.5 : (x - left) / (right - left);
+        const shade = (0.65 + 0.35 * (1 - Math.abs(u - 0.5) * 2)) * fog;
+        ctx.fillStyle = rgb(58 * shade, 128 * shade, 58 * shade);  // tattered body
+        ctx.fillRect(x, topBody, 1, p.drawEndY - topBody);
+        if (u > 0.3 && u < 0.7) {                                   // head band
+          ctx.fillStyle = rgb(120 * shade, 128 * shade, 96 * shade);
+          ctx.fillRect(x, p.drawStartY, 1, h * 0.3);
+        }
+      }
+      // Glowing eyes, only when the centre column is unoccluded.
+      const cxi = Math.floor(p.screenX);
+      if (h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
+        ctx.fillStyle = "#f44";
+        const ew = Math.max(1, fullW * 0.07), eh = Math.max(1, h * 0.045);
+        const ey = p.drawStartY + h * 0.12;
+        ctx.fillRect(p.screenX - fullW * 0.17, ey, ew, eh);
+        ctx.fillRect(p.screenX + fullW * 0.10, ey, ew, eh);
+      }
+    }
+  }
+
+  function drawWeapon() {
+    const gunW = W * 0.22, gunH = H * 0.18;
+    const recoil = muzzleFlash > 0 ? 3 : 0;
+    const gy = H - gunH + recoil;
+    ctx.fillStyle = "#1b1b22";
+    ctx.fillRect(W / 2 - gunW * 0.20, gy, gunW * 0.40, gunH);       // body
+    ctx.fillRect(W / 2 - 2, gy - gunH * 0.30, 4, gunH * 0.35);      // barrel
+    if (muzzleFlash > 0) {
+      ctx.fillStyle = "rgba(255,220,120,0.9)";
+      ctx.beginPath();
+      ctx.arc(W / 2, gy - gunH * 0.30, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawHurt() {
+    const a = 0.5 * (1 - (nowMs - player.lastDamageMs) / 350);
+    ctx.fillStyle = "rgba(190,20,20," + a.toFixed(3) + ")";
+    ctx.fillRect(0, 0, W, 6); ctx.fillRect(0, H - 6, W, 6);
+    ctx.fillRect(0, 0, 6, H); ctx.fillRect(W - 6, 0, 6, H);
+  }
+
+  function drawCrosshair() {
+    ctx.strokeStyle = "rgba(230,230,240,0.8)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(W / 2 - 4, H / 2); ctx.lineTo(W / 2 + 4, H / 2);
+    ctx.moveTo(W / 2, H / 2 - 4); ctx.lineTo(W / 2, H / 2 + 4);
+    ctx.stroke();
   }
 
   function drawMinimap() {
     const s = 5, ox = W - MAP_W * s - 4, oy = 4;
     ctx.globalAlpha = 0.8;
-    for (let y = 0; y < MAP_H; y++) {
+    for (let y = 0; y < MAP_H; y++)
       for (let x = 0; x < MAP_W; x++) {
         ctx.fillStyle = MAP[y][x] ? "#566" : "#111";
         ctx.fillRect(ox + x * s, oy + y * s, s - 1, s - 1);
       }
-    }
+    ctx.fillStyle = "#f44";
+    for (const z of zombies) ctx.fillRect(ox + z.x * s - 1, oy + z.y * s - 1, 2, 2);
     ctx.fillStyle = "#ff5";
-    ctx.fillRect(ox + posX * s - 1, oy + posY * s - 1, 2, 2);
-    ctx.strokeStyle = "#ff5";
-    ctx.beginPath();
-    ctx.moveTo(ox + posX * s, oy + posY * s);
-    ctx.lineTo(ox + (posX + Math.cos(angle) * 1.5) * s, oy + (posY + Math.sin(angle) * 1.5) * s);
-    ctx.stroke();
+    ctx.fillRect(ox + player.x * s - 1, oy + player.y * s - 1, 2, 2);
     ctx.globalAlpha = 1;
   }
 
-  let last = performance.now(), frames = 0, fps = 0, acc = 0;
-  function loop(now) {
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
-    update(dt);
-    render();
+  // ---- HUD + fixed-timestep loop ----
+  let last = performance.now(), frames = 0, fps = 0, fpsAcc = 0, acc = 0;
+  const STEP = 1 / 60;
 
-    frames++; acc += dt;
-    if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
-    hud.textContent =
-      "fps " + fps + "  ·  x " + posX.toFixed(2) + "  y " + posY.toFixed(2) +
-      "  ·  " + ((angle * 180 / Math.PI) % 360 | 0) + "°";
-
-    requestAnimationFrame(loop);
+  function updateHud() {
+    const a = player.ammo[player.weapon];
+    const w = WEAPONS[player.weapon];
+    const reloading = player.reloadTimer !== undefined;
+    const ammoNote = reloading ? " (reloading…)" : (a.mag === 0 ? " — press R" : "");
+    hud.innerHTML =
+      "<b>" + player.points + "</b> pts &nbsp;·&nbsp; HP " + Math.ceil(player.hp) + "/" + player.maxHp +
+      "<br>" + w.name + " &nbsp; " + a.mag + " / " + a.reserve + ammoNote +
+      "<br>zombies " + zombies.length + " &nbsp;·&nbsp; fps " + fps;
   }
-  requestAnimationFrame(loop);
+
+  function frame(t) {
+    let dt = (t - last) / 1000; last = t;
+    if (dt > 0.25) dt = 0.25;        // clamp after a tab-switch to avoid a spiral
+    acc += dt;
+    while (acc >= STEP) { if (!gameOver) simulate(STEP); acc -= STEP; }
+    render();
+    frames++; fpsAcc += dt;
+    if (fpsAcc >= 0.5) { fps = Math.round(frames / fpsAcc); frames = 0; fpsAcc = 0; }
+    updateHud();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
   </script>
 </body>
 </html>
