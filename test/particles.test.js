@@ -43,16 +43,17 @@ describe("spawnBloodPuff — append n blood particles at (x,y)", () => {
   });
 
   it("produces deterministic vx/vy/ttl with a stub rng", () => {
-    // 3 draws per particle: angle, speed, ttl
-    // Use a simple sequence: [0, 0.5, 0.5] → repeating
+    // 3 draws per particle in order: angle, speed, ttl
+    // seq [0, 0.5, 0.5]:
+    //   angle = 0 * 2π = 0
+    //   speed = BLOOD_SPEED_MIN + 0.5 * (BLOOD_SPEED_MAX - BLOOD_SPEED_MIN) = 1.0 + 0.5*3.0 = 2.5
+    //   ttl   = BLOOD_TTL_MIN   + 0.5 * (BLOOD_TTL_MAX   - BLOOD_TTL_MIN)   = 0.3 + 0.5*0.4 = 0.5
     const rng = makeRng([0, 0.5, 0.5]);
     const result = spawnBloodPuff([], 0, 0, 1, rng);
     const p = result[0];
-    // angle = 0 * 2π = 0, speed = SPEED_MIN + 0.5*(SPEED_MAX-SPEED_MIN) = midpoint
-    // vx = cos(0)*speed = speed, vy = sin(0)*speed ≈ 0
-    expect(p.vx).toBeGreaterThan(0); // cos(0) = 1, positive
-    expect(p.vy).toBeCloseTo(0, 4);  // sin(0) = 0
-    expect(p.ttl).toBeGreaterThan(0);
+    expect(p.vx).toBeCloseTo(Math.cos(0 * 2 * Math.PI) * (1.0 + 0.5 * 3.0), 10); // 2.5
+    expect(p.vy).toBeCloseTo(Math.sin(0 * 2 * Math.PI) * (1.0 + 0.5 * 3.0), 10); // 0.0
+    expect(p.ttl).toBeCloseTo(0.3 + 0.5 * 0.4, 10);                               // 0.5
     expect(p.age).toBe(0);
   });
 
@@ -96,12 +97,17 @@ describe("spawnSpark — append n spark particles at (x,y)", () => {
   });
 
   it("deterministic with stub rng", () => {
+    // 3 draws per particle in order: angle, speed, ttl
+    // seq [0.3, 0.8, 0.2]:
+    //   angle = 0.3 * 2π
+    //   speed = SPARK_SPEED_MIN + 0.8 * (SPARK_SPEED_MAX - SPARK_SPEED_MIN) = 4.0 + 0.8*5.0 = 8.0
+    //   ttl   = SPARK_TTL_MIN   + 0.2 * (SPARK_TTL_MAX   - SPARK_TTL_MIN)   = 0.1 + 0.2*0.2 = 0.14
     const rng = makeRng([0.3, 0.8, 0.2]);
     const result = spawnSpark([], 0, 0, 1, rng);
     const p = result[0];
-    expect(typeof p.vx).toBe("number");
-    expect(typeof p.vy).toBe("number");
-    expect(p.ttl).toBeGreaterThan(0);
+    expect(p.vx).toBeCloseTo(Math.cos(0.3 * 2 * Math.PI) * (4.0 + 0.8 * 5.0), 10);
+    expect(p.vy).toBeCloseTo(Math.sin(0.3 * 2 * Math.PI) * (4.0 + 0.8 * 5.0), 10);
+    expect(p.ttl).toBeCloseTo(0.1 + 0.2 * 0.2, 10);                                 // 0.14
   });
 });
 
