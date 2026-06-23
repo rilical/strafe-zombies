@@ -1,6 +1,12 @@
 const UNREACHABLE = -1;
 const MAX_DISTANCE = 127;
 const COLLISION_RADIUS = 0.18;
+const CARDINAL_STEPS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1]
+];
 
 function indexOf(W, col, row) {
   return row * W + col;
@@ -64,14 +70,9 @@ export function buildFlowField(level, world, col, row, isBlocked) {
     }
     const next = base + 1;
 
-    const neighbors = [
-      [cx + 1, cy],
-      [cx - 1, cy],
-      [cx, cy + 1],
-      [cx, cy - 1]
-    ];
-
-    for (const [nx, ny] of neighbors) {
+    for (const [dx, dy] of CARDINAL_STEPS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
       if (!inBounds(W, H, nx, ny)) continue;
       const ni = indexOf(W, nx, ny);
       if (field[ni] !== UNREACHABLE) continue;
@@ -104,14 +105,7 @@ export function flowDir(field, W, col, row) {
   let bestDy = 0;
   const H = Math.floor(field.length / W);
 
-  const neighbors = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1]
-  ];
-
-  for (const [dx, dy] of neighbors) {
+  for (const [dx, dy] of CARDINAL_STEPS) {
     const nx = col + dx;
     const ny = row + dy;
     if (!inBounds(W, H, nx, ny)) continue;
