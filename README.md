@@ -94,6 +94,8 @@ tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress
 - [x] Headshots, screen-shake, score popups, blood/spark particles
 - [x] Persistent decals — bullet holes on walls + blood pools on the floor (`decals.js`)
 - [x] Fully procedural sound — synthesised live in WebAudio, no audio files (`sfx.js`)
+- [x] Boarded-window siege — zombies tear the planks off and climb in; press `F` to re-board for points (`barricades.js`)
+- [x] Minimap buyables — wall-guns, the box, perks, and doors flagged on the radar (`markers.js`)
 
 ## License
 

@@ -65,6 +65,14 @@ The Nacht survival systems, each pure and unit-tested (frozen contracts in
 - `pathfind.js` — a BFS **flow field** (`buildFlowField`, `flowDir`, `stepZombieAlong`) the
   zombies follow around the core. This **supersedes the original straight-line `stepZombie`**
   (the retired `src/game.js`); `index.html` rebuilds the field when the player changes cell.
+- `barricades.js` — the boarded-window mechanic on top of `barriers.js`' board counts:
+  `windowPoints` (inside/outside cell centres), `pickWindow` (which window a shambler attacks,
+  preferring boarded ones), `tickBreak` (the per-plank tear clock), and `findRepairableWindow`
+  (the nearest window the player can re-nail). `index.html` spawns zombies OUTSIDE in a
+  `breaking` state, tears a plank per `TEAR_SECS` until the barricade is down, then promotes them
+  to the flow-field chase; the player presses `F` at a window to repair a plank for points.
+- `markers.js` — `buyableMarkers(level, world, player)` lists the buyables still worth showing
+  on the radar (owned Perk-a-Colas and opened debris doors drop out); the minimap draws each.
 
 ### Economy & buying — `economy.js`, `weapons.js`, `perks.js`, `interact.js`
 The points-and-purchase chain. Each is pure and unit-tested; `index.html` only sequences them:
