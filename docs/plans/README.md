@@ -41,3 +41,5 @@ A short checklist: tests green, wired into the renderer, docs/comments updated.
 ## Index
 
 - [`0001-sprite-rendering.md`](0001-sprite-rendering.md) — billboard sprites, depth-correct.
+- [`0002-zombies-survival.md`](0002-zombies-survival.md) — epic: the full Nacht-der-Untoten
+  survival game and its 14-PR build sequence.
