@@ -1,9 +1,17 @@
 // Perk-a-Cola data and stat effects. Integration handles buying; this module
 // only owns perk ids and pure player-state helpers.
+const JUGG_ID = "jugg";
+const SPEED_COLA_ID = "speedCola";
+const DOUBLE_TAP_ID = "doubleTap";
+const JUGG_MAX_HP = 250;
+const BASE_MAX_HP = 100;
+const SPEED_COLA_RELOAD_MULTIPLIER = 0.5;
+const DOUBLE_TAP_RPM_MULTIPLIER = 1.33;
+
 export const PERKS = Object.freeze({
-  jugg: Object.freeze({ id: "jugg", name: "Juggernog", cost: 2500 }),
-  speedCola: Object.freeze({ id: "speedCola", name: "Speed Cola", cost: 3000 }),
-  doubleTap: Object.freeze({ id: "doubleTap", name: "Double Tap", cost: 2000 }),
+  jugg: Object.freeze({ id: JUGG_ID, name: "Juggernog", cost: 2500 }),
+  speedCola: Object.freeze({ id: SPEED_COLA_ID, name: "Speed Cola", cost: 3000 }),
+  doubleTap: Object.freeze({ id: DOUBLE_TAP_ID, name: "Double Tap", cost: 2000 }),
 });
 
 /**
@@ -34,7 +42,7 @@ export function hasPerk(player, id) {
  * Juggernog raises the survival cap; integration syncs this value into player.maxHp.
  */
 export function effectiveMaxHp(player) {
-  return hasPerk(player, "jugg") ? 250 : 100;
+  return hasPerk(player, JUGG_ID) ? JUGG_MAX_HP : BASE_MAX_HP;
 }
 
 /**
@@ -43,7 +51,7 @@ export function effectiveMaxHp(player) {
  * Speed Cola halves the weapon reload duration supplied by the caller.
  */
 export function effectiveReloadMs(player, baseMs) {
-  return hasPerk(player, "speedCola") ? baseMs * 0.5 : baseMs;
+  return hasPerk(player, SPEED_COLA_ID) ? baseMs * SPEED_COLA_RELOAD_MULTIPLIER : baseMs;
 }
 
 /**
@@ -52,5 +60,5 @@ export function effectiveReloadMs(player, baseMs) {
  * Double Tap increases the weapon cadence by the locked v1 multiplier.
  */
 export function effectiveRpm(player, baseRpm) {
-  return hasPerk(player, "doubleTap") ? baseRpm * 1.33 : baseRpm;
+  return hasPerk(player, DOUBLE_TAP_ID) ? baseRpm * DOUBLE_TAP_RPM_MULTIPLIER : baseRpm;
 }
