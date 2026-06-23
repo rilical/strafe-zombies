@@ -157,7 +157,7 @@ describe("findInteractable — defensive and immutable behavior", () => {
         {
           id: "stair-door",
           cost: 1000,
-          cells: [[0, 2], [2, 2], [5, 5]],
+          cells: [[2, 2], [5, 5]],
           opensRoom: "stairs",
         },
       ],
