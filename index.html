@@ -92,7 +92,7 @@
   // ---------------------------------------------------------------------------
   import { castRay, moveWithCollision } from "./src/engine.js";
   import { LEVEL } from "./src/level.js";
-  import { createWorld, isBlocked, openDoor } from "./src/barriers.js";
+  import { createWorld, isBlocked, openDoor, tearBoard, repairBoard } from "./src/barriers.js";
   import { createSpawnState, tickSpawner, advanceRound,
            zombieHealthForRound, zombieSpeedForRound } from "./src/rounds.js";
   import { buildFlowField, stepZombieAlong } from "./src/pathfind.js";
@@ -112,6 +112,8 @@
   import { buildVoice } from "./src/sfx.js";
   import { addDecal, tickDecals, projectWallDecal, projectFloorDecal } from "./src/decals.js";
   import { buyableMarkers } from "./src/markers.js";
+  import { windowPoints, pickWindow, tickBreak, findRepairableWindow,
+           REPAIR_REWARD, MAX_BOARDS } from "./src/barricades.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -206,12 +208,10 @@
   const HIT_COOLDOWN_MS = 750; // per-zombie delay between claws
   const PICKUP_RANGE = 1.2;    // walk this close to a floor drop to collect the power-up
 
-  // Zombies enter at the boarded windows: each spawns just inside the window, on the
-  // walkable interior cell it faces. Every room is reachable from the spawn, so the
-  // flow field can train a zombie from any window straight to the player.
-  const SPAWN_CELLS = LEVEL.windows.map((w) => ({
-    x: w.cx + w.faceX + 0.5, y: w.cy + w.faceY + 0.5,
-  }));
+  // Zombies enter through the boarded windows: a shambler appears OUTSIDE its window
+  // and rips the planks off (barricades.js owns the tear timing) before climbing in to
+  // the interior cell and joining the flow-field chase. Every room is reachable from the
+  // spawn, so the field can train any climbed-in zombie straight to the player.
 
   // Wall tints by grid value: 1 = Nacht brick, 2 = heavy stone core, 3 = debris rubble.
   const WALL_COLORS = [null, [176, 58, 58], [104, 102, 116], [120, 86, 52]];
@@ -323,7 +323,16 @@
   // opens the door. No buy rules live here — index.html only sequences the pure calls.
   function tryBuy() {
     const it = findInteractable(LEVEL, world, player);
-    if (!it) return;                                  // nothing in reach — stay silent
+    if (!it) {                                        // no buyable in reach — maybe a window to re-board?
+      const win = findRepairableWindow(LEVEL, world, player);
+      if (win) {
+        world = repairBoard(world, win.id);           // nail one plank back on
+        player = earn(player, REPAIR_REWARD);         // Nacht pays you to barricade
+        flashBuy("+" + REPAIR_REWARD + " REPAIR");
+        playSfx("buy");
+      }
+      return;
+    }
     if (player.points < it.cost) { playSfx("deny"); return; }   // in reach but can't afford
     const paid = spend(player, it.cost);
     if (!paid.ok) { playSfx("deny"); return; }
@@ -475,8 +484,27 @@
       flowCol = pcol; flowRow = prow;
     }
     zombies = zombies.map((z) => {
+      const cool = Math.max(0, (z.hitCooldown || 0) - dt * 1000);
+      // Breaking zombies stand outside their window ripping planks; they don't path
+      // until the barricade is down, then they climb in to the interior cell and chase.
+      if (z.state === "breaking") {
+        const win = LEVEL.windows.find((w) => w.id === z.window);
+        const boards = world.windows[z.window] ?? 0;
+        if (boards <= 0) {                                       // already clear → climb straight in
+          const inside = windowPoints(win).inside;
+          return { ...z, x: inside.x, y: inside.y, state: "chase", tearTimer: 0, hitCooldown: cool };
+        }
+        const r = tickBreak(z.tearTimer || 0, boards, dt);       // advance the plank clock
+        for (let i = 0; i < r.tears; i++) world = tearBoard(world, z.window);   // planks come off
+        if (r.broken) {
+          const inside = windowPoints(win).inside;
+          playSfx("door");                                       // the barricade gives way
+          return { ...z, x: inside.x, y: inside.y, state: "chase", tearTimer: 0, hitCooldown: cool };
+        }
+        return { ...z, tearTimer: r.tearTimer, hitCooldown: cool };
+      }
       const moved = stepZombieAlong(LEVEL, world, z, flowField, dt, z.speed, isBlocked);
-      return { ...moved, hitCooldown: Math.max(0, (z.hitCooldown || 0) - dt * 1000) };
+      return { ...moved, hitCooldown: cool };
     });
     for (let i = 0; i < zombies.length; i++) {
       const z = zombies[i];
@@ -503,11 +531,12 @@
       const tick = tickSpawner(spawnState, dt);
       spawnState = tick.state;
       if (tick.shouldSpawn) {
-        const s = SPAWN_CELLS[(Math.random() * SPAWN_CELLS.length) | 0];
-        zombies.push({ id: nextZombieId++, x: s.x, y: s.y, angle: 0,
+        const win = pickWindow(LEVEL.windows, world, Math.random);   // attack a still-boarded window
+        const out = windowPoints(win).outside;                       // shamble up from outside the wall
+        zombies.push({ id: nextZombieId++, x: out.x, y: out.y, angle: 0,
                        hp: zombieHealthForRound(spawnState.round),
                        speed: zombieSpeedForRound(spawnState.round),
-                       state: "chase", hitCooldown: 0 });
+                       state: "breaking", window: win.id, tearTimer: 0, hitCooldown: 0 });
         playSfx("groan");                            // a fresh shambler groans in (pitch varies)
       }
       if (spawnState.toSpawn === 0) spawnState = advanceRound(spawnState);  // → waiting
@@ -631,6 +660,7 @@
     }
 
     drawDecals();
+    drawBoards();
     drawCorpses();
     drawPowerUps();
     drawZombies();
@@ -738,6 +768,35 @@
           if (x < 0 || x >= W || pr.depth > zbuffer[x] + 0.12) continue;  // only on its own (or a nearer) wall
           const dy = r * Math.sqrt(Math.max(0, 1 - ((x - pr.screenX) / r) ** 2));
           ctx.fillRect(x, pr.screenY - dy, 1, dy * 2);
+        }
+      }
+    }
+  }
+
+  // Boarded windows: paint the planks still nailed across each window so a breached
+  // barricade visibly loses slats. We project the room-facing wall surface (mirroring the
+  // bullet-hole math) and depth-clip against the wall buffer so boards behind a nearer
+  // wall stay hidden.
+  function drawBoards() {
+    for (const win of LEVEL.windows) {
+      const n = world.windows[win.id] ?? 0;
+      if (n <= 0) continue;                                       // fully torn open — nothing to draw
+      const fx = win.cx + 0.5 + win.faceX * 0.5;                  // the surface the player actually sees
+      const fy = win.cy + 0.5 + win.faceY * 0.5;
+      const pr = projectWallDecal(player, FOV, W, H, { x: fx, y: fy });
+      if (!pr.visible) continue;
+      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+      const halfW = Math.min(40, Math.max(3, pr.scale * 0.18));   // plank span tracks apparent wall size
+      const plankH = Math.max(1, pr.scale * 0.035);
+      const spread = pr.scale * 0.34;                             // vertical band the planks fill
+      for (let b = 0; b < n; b++) {
+        const py = pr.screenY - spread / 2 + (b + 0.5) * (spread / MAX_BOARDS);
+        const tone = b % 2 ? 96 : 120;                            // alternate slat shading for depth
+        ctx.fillStyle = "rgba(" + ((tone * fog) | 0) + "," + ((tone * 0.64 * fog) | 0) + "," +
+                        ((tone * 0.38 * fog) | 0) + ",0.92)";
+        for (let x = Math.floor(pr.screenX - halfW); x < Math.ceil(pr.screenX + halfW); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x] + 0.12) continue;   // hide behind nearer walls
+          ctx.fillRect(x, py - plankH / 2, 1, plankH);
         }
       }
     }
