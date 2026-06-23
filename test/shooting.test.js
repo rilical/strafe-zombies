@@ -92,4 +92,25 @@ describe("resolveShot — immutable shot resolution", () => {
     expect(result.zombies).not.toBe(zombies);
     expect(result.zombies[0]).toBe(zombies[0]);
   });
+
+  it("fires along an explicit aimAngle when provided, off the player's facing axis", () => {
+    // Free-aim: the integration layer points shots at the crosshair, which can sit
+    // off the player's facing direction. A zombie the straight-ahead shot misses must
+    // be hit when aimAngle is steered onto it.
+    const player = { x: 1.5, y: 1.5, angle: 0 };
+    const zombie = { id: "offaxis", x: 3.0, y: 2.2, hp: 30 };
+    const zombies = [zombie];
+    const weapon = { damage: 40 };
+
+    // Default (along player.angle = 0) sails past this zombie.
+    expect(resolveShot(OPEN_ROOM_MAP, player, zombies, weapon).killedId).toBeNull();
+
+    // Aiming straight at the zombie connects and kills it.
+    const aim = Math.atan2(zombie.y - player.y, zombie.x - player.x);
+    const result = resolveShot(OPEN_ROOM_MAP, player, zombies, weapon, aim);
+
+    expect(result.killedId).toBe("offaxis");
+    expect(result.scoreDelta).toBe(60);
+    expect(result.zombies[0].hp).toBe(0);
+  });
 });

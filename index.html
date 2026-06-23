@@ -11,7 +11,7 @@
     width: 100vw; height: 100vh;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    cursor: crosshair;
+    cursor: none;            /* we draw our own crosshair at the pointer position */
   }
   #hud {
     position: fixed; top: 10px; left: 12px;
@@ -38,7 +38,7 @@
 <body>
   <canvas id="screen" width="320" height="200"></canvas>
   <div id="hud"></div>
-  <div id="hint">WASD move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp; click shoot &nbsp;·&nbsp; R reload</div>
+  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims the gun &nbsp;·&nbsp; screen edges turn &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload</div>
   <div id="overlay"></div>
 
   <script type="module">
@@ -65,8 +65,9 @@
   // ---- Tunables (MVP integration config; round/level scaling arrives with those modules) ----
   const FOV = 0.66;            // camera-plane half-width (~66° field of view)
   const MOVE = 2.8;            // player units / second
-  const TURN = 2.6;            // arrow-key turn radians / second (mouse also turns)
-  const MOUSE_SENS = 0.0022;   // radians per pixel of mouse movement
+  const TURN = 2.6;            // arrow-key turn radians / second (mouse edge-zones also turn)
+  const EDGE = 0.12;          // fraction of screen width on each side that steers the view
+  const EDGE_TURN = 2.8;      // max turn radians / second at the very edge (free-aim 360°)
   const MAX_VIEW = 16;         // distance fog falls off over this many cells
 
   const ZOMBIE_HP = 150;       // MVP placeholder until rounds.js scales HP per round
@@ -85,7 +86,9 @@
   const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
 
   // ---- Mutable game state (player matches the frozen GameState contract) ----
-  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, nowMs;
+  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, hitMarker, nowMs;
+  // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
+  let cursorX = W / 2, cursorY = H / 2;
 
   function freshPlayer() {
     const w = WEAPONS.m1911;
@@ -106,6 +109,7 @@
     spawnTimer = 0.5;
     gameOver = false;
     muzzleFlash = 0;
+    hitMarker = 0;
     nowMs = 0;
     overlay.classList.remove("show");
   }
@@ -120,18 +124,25 @@
   });
   addEventListener("keyup", (e) => { keys[e.code] = false; });
 
-  // Trigger discipline lives here (input glue): auto weapons fire while held,
-  // semi-autos fire once per click. weapons.fire still enforces the rpm cadence.
+  // No pointer-lock: the visible cursor drives the gun. Map the page pointer into
+  // canvas pixels so the crosshair lines up with the column the raycaster renders.
+  function trackCursor(e) {
+    const r = canvas.getBoundingClientRect();
+    cursorX = Math.max(0, Math.min(W, ((e.clientX - r.left) / r.width) * W));
+    cursorY = Math.max(0, Math.min(H, ((e.clientY - r.top) / r.height) * H));
+  }
+  addEventListener("mousemove", trackCursor);
+
+  // Trigger discipline (input glue): auto weapons fire while held, semi-autos once
+  // per click. weapons.fire still enforces the rpm cadence; the FIRST click fires.
   let triggerHeld = false, triggerEdge = false;
-  canvas.addEventListener("mousedown", () => {
+  canvas.addEventListener("mousedown", (e) => {
+    trackCursor(e);
     if (gameOver) { reset(); return; }
-    if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
     triggerHeld = true; triggerEdge = true;
   });
   addEventListener("mouseup", () => { triggerHeld = false; });
-  document.addEventListener("mousemove", (e) => {
-    if (document.pointerLockElement === canvas) player.angle += e.movementX * MOUSE_SENS;
-  });
+  overlay.addEventListener("mousedown", () => { if (gameOver) reset(); });
 
   // ---- Weapon-state composition seam (per docs/agents/README.md) ----
   // weapons.* operate on a flat { id, mag, reserve, reloadTimer, lastShotMs };
@@ -154,9 +165,16 @@
   function simulate(dt) {
     nowMs += dt * 1000;
 
-    // Player movement: WASD (forward/back + strafe); arrows still turn as a fallback.
-    if (keys.ArrowLeft) player = { ...player, angle: player.angle - TURN * dt };
-    if (keys.ArrowRight) player = { ...player, angle: player.angle + TURN * dt };
+    // Turn: cursor edge-zones steer the view for full 360° (arrow keys still work).
+    let turn = 0;
+    const lz = EDGE * W, rz = (1 - EDGE) * W;
+    if (cursorX < lz) turn -= EDGE_TURN * (1 - cursorX / lz);
+    else if (cursorX > rz) turn += EDGE_TURN * ((cursorX - rz) / (W - rz));
+    if (keys.ArrowLeft) turn -= TURN;
+    if (keys.ArrowRight) turn += TURN;
+    if (turn !== 0) player = { ...player, angle: player.angle + turn * dt };
+
+    // Movement: W/S forward/back, A/D strafe (kiting preserved).
     const dirX = Math.cos(player.angle), dirY = Math.sin(player.angle);
     let mx = 0, my = 0;
     if (keys.KeyW) { mx += dirX; my += dirY; }
@@ -170,6 +188,11 @@
       player = { ...player, x: p.x, y: p.y };
     }
 
+    // Free-aim: derive the shot direction from the same camera ray the renderer uses
+    // for the crosshair's column, so the bullet lands exactly where the crosshair sits.
+    const cameraX = (2 * cursorX) / W - 1;
+    const aimAngle = Math.atan2(dirY + dirX * FOV * cameraX, dirX - dirY * FOV * cameraX);
+
     // Reload progress (completes once weapons' internal timer elapses).
     writeWeapon(tickReload(composeWeapon(), nowMs));
 
@@ -178,14 +201,18 @@
     const wantFire = weapon.auto ? triggerHeld : triggerEdge;
     triggerEdge = false;
     if (wantFire) {
-      const { state, didFire } = fireWeapon(composeWeapon(), nowMs);
-      if (didFire) {
-        writeWeapon(state);
-        muzzleFlash = 0.05;
-        const res = resolveShot(MAP, player, zombies, weapon);
-        zombies = res.zombies;
-        if (res.scoreDelta > 0) player = earn(player, res.scoreDelta);
-        zombies = zombies.filter((z) => z.hp > 0);
+      const ws = composeWeapon();
+      if (ws.mag === 0 && ws.reloadTimer === undefined) {
+        writeWeapon(startReload(ws, nowMs));      // pull the trigger on empty → auto-reload
+      } else {
+        const { state, didFire } = fireWeapon(ws, nowMs);
+        if (didFire) {
+          writeWeapon(state);
+          muzzleFlash = 0.05;
+          const res = resolveShot(MAP, player, zombies, weapon, aimAngle);
+          zombies = res.zombies.filter((z) => z.hp > 0);
+          if (res.scoreDelta > 0) { player = earn(player, res.scoreDelta); hitMarker = 0.12; }
+        }
       }
     }
 
@@ -215,12 +242,12 @@
     }
 
     if (muzzleFlash > 0) muzzleFlash -= dt;
+    if (hitMarker > 0) hitMarker -= dt;
     if (isGameOver(player)) endGame();
   }
 
   function endGame() {
     gameOver = true;
-    document.exitPointerLock?.();
     overlay.innerHTML = "YOU DIED<small>Score " + player.points +
       " · click or press Enter to restart</small>";
     overlay.classList.add("show");
@@ -258,6 +285,7 @@
     drawZombies();
     drawWeapon();
     if (nowMs - player.lastDamageMs < 350) drawHurt();
+    drawEdgeHint();
     drawCrosshair();
     drawMinimap();
   }
@@ -297,14 +325,15 @@
   function drawWeapon() {
     const gunW = W * 0.22, gunH = H * 0.18;
     const recoil = muzzleFlash > 0 ? 3 : 0;
+    const gx = W / 2 + (cursorX - W / 2) * 0.5;   // the gun leans toward the cursor
     const gy = H - gunH + recoil;
     ctx.fillStyle = "#1b1b22";
-    ctx.fillRect(W / 2 - gunW * 0.20, gy, gunW * 0.40, gunH);       // body
-    ctx.fillRect(W / 2 - 2, gy - gunH * 0.30, 4, gunH * 0.35);      // barrel
+    ctx.fillRect(gx - gunW * 0.20, gy, gunW * 0.40, gunH);       // body
+    ctx.fillRect(gx - 2, gy - gunH * 0.30, 4, gunH * 0.35);      // barrel
     if (muzzleFlash > 0) {
       ctx.fillStyle = "rgba(255,220,120,0.9)";
       ctx.beginPath();
-      ctx.arc(W / 2, gy - gunH * 0.30, 6, 0, Math.PI * 2);
+      ctx.arc(gx, gy - gunH * 0.30, 6, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -317,12 +346,36 @@
   }
 
   function drawCrosshair() {
-    ctx.strokeStyle = "rgba(230,230,240,0.8)";
+    const cx = cursorX, cy = cursorY;
+    ctx.strokeStyle = "rgba(230,230,240,0.85)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(W / 2 - 4, H / 2); ctx.lineTo(W / 2 + 4, H / 2);
-    ctx.moveTo(W / 2, H / 2 - 4); ctx.lineTo(W / 2, H / 2 + 4);
+    ctx.moveTo(cx - 5, cy); ctx.lineTo(cx - 2, cy);
+    ctx.moveTo(cx + 2, cy); ctx.lineTo(cx + 5, cy);
+    ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy - 2);
+    ctx.moveTo(cx, cy + 2); ctx.lineTo(cx, cy + 5);
     ctx.stroke();
+    if (hitMarker > 0) {                      // brief red X when a shot connects
+      ctx.strokeStyle = "rgba(255,80,80,0.95)";
+      ctx.beginPath();
+      ctx.moveTo(cx - 7, cy - 7); ctx.lineTo(cx - 3, cy - 3);
+      ctx.moveTo(cx + 7, cy - 7); ctx.lineTo(cx + 3, cy - 3);
+      ctx.moveTo(cx - 7, cy + 7); ctx.lineTo(cx - 3, cy + 3);
+      ctx.moveTo(cx + 7, cy + 7); ctx.lineTo(cx + 3, cy + 3);
+      ctx.stroke();
+    }
+  }
+
+  // Faint bar on whichever edge the cursor is steering into, so turning reads clearly.
+  function drawEdgeHint() {
+    const lz = EDGE * W, rz = (1 - EDGE) * W;
+    if (cursorX < lz) {
+      ctx.fillStyle = "rgba(150,180,255," + (0.10 + 0.22 * (1 - cursorX / lz)).toFixed(3) + ")";
+      ctx.fillRect(0, 0, 3, H);
+    } else if (cursorX > rz) {
+      ctx.fillStyle = "rgba(150,180,255," + (0.10 + 0.22 * ((cursorX - rz) / (W - rz))).toFixed(3) + ")";
+      ctx.fillRect(W - 3, 0, 3, H);
+    }
   }
 
   function drawMinimap() {
@@ -348,7 +401,7 @@
     const a = player.ammo[player.weapon];
     const w = WEAPONS[player.weapon];
     const reloading = player.reloadTimer !== undefined;
-    const ammoNote = reloading ? " (reloading…)" : (a.mag === 0 ? " — press R" : "");
+    const ammoNote = reloading ? " — RELOADING…" : (a.mag === 0 ? " — OUT (R)" : "");
     hud.innerHTML =
       "<b>" + player.points + "</b> pts &nbsp;·&nbsp; HP " + Math.ceil(player.hp) + "/" + player.maxHp +
       "<br>" + w.name + " &nbsp; " + a.mag + " / " + a.reserve + ammoNote +

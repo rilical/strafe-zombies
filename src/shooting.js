@@ -60,12 +60,13 @@ export function scoreForHit(zombie, killed) {
 }
 
 /**
- * Fires along the player's facing angle, immutably damages the selected zombie,
- * and reports the score delta plus killed zombie id for integration glue.
+ * Fires along `aimAngle` (defaulting to the player's facing angle), immutably
+ * damages the selected zombie, and reports the score delta plus killed zombie id
+ * for integration glue. Free-aim callers pass the crosshair direction as aimAngle.
  */
-export function resolveShot(map, player, zombies, weapon) {
-  const dx = Math.cos(player.angle);
-  const dy = Math.sin(player.angle);
+export function resolveShot(map, player, zombies, weapon, aimAngle = player.angle) {
+  const dx = Math.cos(aimAngle);
+  const dy = Math.sin(aimAngle);
   const hit = shootRay(map, player.x, player.y, dx, dy, zombies);
 
   if (hit === null) {
