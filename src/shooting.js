@@ -3,6 +3,8 @@ import { castRay } from "./engine.js";
 const DEFAULT_ZOMBIE_RADIUS = 0.4;
 const EPSILON = 1e-9;
 
+export const HEADSHOT_DAMAGE_MULT = 2;
+
 // Ray-circle intersection in the same t-units as castRay: if callers pass an
 // unnormalized direction, both zombie and wall distances stay comparable.
 function intersectRayCircle(px, py, dx, dy, cx, cy, radius) {
@@ -53,10 +55,12 @@ export function applyDamage(zombie, dmg) {
 }
 
 /**
- * Frozen scoring contract for this module: any hit is 10, a kill is 60.
+ * Frozen scoring contract for this module: any hit is 10; kills score more,
+ * with the integration layer's headshot boolean unlocking the bonus kill value.
  */
-export function scoreForHit(zombie, killed) {
-  return killed ? 60 : 10;
+export function scoreForHit(zombie, killed, headshot = false) {
+  if (killed) return headshot ? 100 : 60;
+  return 10;
 }
 
 /**
@@ -64,17 +68,32 @@ export function scoreForHit(zombie, killed) {
  * damages the selected zombie, and reports the score delta plus killed zombie id
  * for integration glue. Free-aim callers pass the crosshair direction as aimAngle.
  */
-export function resolveShot(map, player, zombies, weapon, aimAngle = player.angle) {
+export function resolveShot(
+  map,
+  player,
+  zombies,
+  weapon,
+  aimAngle = player.angle,
+  opts = {},
+) {
+  const { headshot = false } = opts;
   const dx = Math.cos(aimAngle);
   const dy = Math.sin(aimAngle);
   const hit = shootRay(map, player.x, player.y, dx, dy, zombies);
 
   if (hit === null) {
-    return { zombies: zombies.slice(), scoreDelta: 0, killedId: null };
+    return {
+      zombies: zombies.slice(),
+      scoreDelta: 0,
+      killedId: null,
+      headshot: false,
+      hitId: null,
+    };
   }
 
   const hitIndex = zombies.indexOf(hit.zombie);
-  const damaged = applyDamage(hit.zombie, weapon.damage);
+  const damage = weapon.damage * (headshot ? HEADSHOT_DAMAGE_MULT : 1);
+  const damaged = applyDamage(hit.zombie, damage);
   const killed = hit.zombie.hp > 0 && damaged.hp === 0;
   const nextZombies = zombies.map((zombie, index) => (
     index === hitIndex ? damaged : zombie
@@ -82,7 +101,9 @@ export function resolveShot(map, player, zombies, weapon, aimAngle = player.angl
 
   return {
     zombies: nextZombies,
-    scoreDelta: scoreForHit(hit.zombie, killed),
+    scoreDelta: scoreForHit(hit.zombie, killed, headshot),
     killedId: killed ? hit.zombie.id ?? null : null,
+    headshot,
+    hitId: hit.zombie.id ?? null,
   };
 }

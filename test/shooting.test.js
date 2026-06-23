@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { shootRay, resolveShot, applyDamage, scoreForHit } from "../src/shooting.js";
+import {
+  HEADSHOT_DAMAGE_MULT,
+  shootRay,
+  resolveShot,
+  applyDamage,
+  scoreForHit,
+} from "../src/shooting.js";
 
 const CORRIDOR_MAP = [
   [1, 1, 1, 1, 1, 1],
@@ -45,6 +51,10 @@ describe("shootRay — hitscan target selection", () => {
 });
 
 describe("damage and scoring", () => {
+  it("exports the frozen headshot damage multiplier", () => {
+    expect(HEADSHOT_DAMAGE_MULT).toBe(2);
+  });
+
   it("applies damage immutably and floors hp at zero", () => {
     const zombie = { id: "z1", x: 2.5, y: 1.5, hp: 25, state: "shamble" };
 
@@ -61,6 +71,13 @@ describe("damage and scoring", () => {
     expect(scoreForHit(zombie, false)).toBe(10);
     expect(scoreForHit(zombie, true)).toBe(60);
   });
+
+  it("scores headshot kills at the bonus value without changing non-kill hits", () => {
+    const zombie = { id: "z1", x: 2.5, y: 1.5, hp: 25 };
+
+    expect(scoreForHit(zombie, true, true)).toBe(100);
+    expect(scoreForHit(zombie, false, true)).toBe(10);
+  });
 });
 
 describe("resolveShot — immutable shot resolution", () => {
@@ -75,6 +92,8 @@ describe("resolveShot — immutable shot resolution", () => {
 
     expect(result.scoreDelta).toBe(60);
     expect(result.killedId).toBe("near");
+    expect(result.headshot).toBe(false);
+    expect(result.hitId).toBe("near");
     expect(result.zombies).not.toBe(zombies);
     expect(result.zombies[0]).toBe(far);
     expect(result.zombies[1]).toEqual({ id: "near", x: 2.8, y: 1.5, hp: 0 });
@@ -88,9 +107,53 @@ describe("resolveShot — immutable shot resolution", () => {
 
     const result = resolveShot(OPEN_ROOM_MAP, player, zombies, { damage: 40 });
 
-    expect(result).toEqual({ zombies, scoreDelta: 0, killedId: null });
+    expect(result).toEqual({
+      zombies,
+      scoreDelta: 0,
+      killedId: null,
+      headshot: false,
+      hitId: null,
+    });
     expect(result.zombies).not.toBe(zombies);
     expect(result.zombies[0]).toBe(zombies[0]);
+  });
+
+  it("doubles damage for a killing headshot and awards headshot kill score", () => {
+    const player = { x: 1.5, y: 1.5, angle: 0 };
+    const zombie = { id: "headshot-kill", x: 2.8, y: 1.5, hp: 70 };
+    const zombies = [zombie];
+    const weapon = { damage: 40 };
+
+    const result = resolveShot(CORRIDOR_MAP, player, zombies, weapon, player.angle, {
+      headshot: true,
+    });
+
+    expect(result.scoreDelta).toBe(100);
+    expect(result.killedId).toBe("headshot-kill");
+    expect(result.headshot).toBe(true);
+    expect(result.hitId).toBe("headshot-kill");
+    expect(result.zombies[0]).toEqual({ id: "headshot-kill", x: 2.8, y: 1.5, hp: 0 });
+    expect(result.zombies[0]).not.toBe(zombie);
+    expect(zombie.hp).toBe(70);
+  });
+
+  it("records non-killing headshot metadata while keeping hit score at ten", () => {
+    const player = { x: 1.5, y: 1.5, angle: 0 };
+    const zombie = { id: "headshot-wound", x: 2.8, y: 1.5, hp: 90 };
+    const zombies = [zombie];
+    const weapon = { damage: 40 };
+
+    const result = resolveShot(CORRIDOR_MAP, player, zombies, weapon, player.angle, {
+      headshot: true,
+    });
+
+    expect(result.scoreDelta).toBe(10);
+    expect(result.killedId).toBeNull();
+    expect(result.headshot).toBe(true);
+    expect(result.hitId).toBe("headshot-wound");
+    expect(result.zombies[0]).toEqual({ id: "headshot-wound", x: 2.8, y: 1.5, hp: 10 });
+    expect(result.zombies[0]).not.toBe(zombie);
+    expect(zombie.hp).toBe(90);
   });
 
   it("fires along an explicit aimAngle when provided, off the player's facing axis", () => {
