@@ -1,5 +1,13 @@
 const INTERMISSION_SECONDS = 10;
 
+function canEmitSpawn(state, spawnTimer) {
+  return (
+    spawnTimer >= spawnDelayForRound(state.round) &&
+    state.toSpawn > 0 &&
+    state.alive < maxAliveForRound(state.round)
+  );
+}
+
 // Locked Nacht pacing: total zombies in round r.
 export function zombiesForRound(r) {
   return 2 * r + 4;
@@ -53,10 +61,7 @@ export function createSpawnState(round) {
 
 export function tickSpawner(state, dt) {
   const spawnTimer = state.spawnTimer + dt;
-  const canSpawn =
-    spawnTimer >= spawnDelayForRound(state.round) &&
-    state.toSpawn > 0 &&
-    state.alive < maxAliveForRound(state.round);
+  const canSpawn = canEmitSpawn(state, spawnTimer);
 
   if (!canSpawn) {
     return {
@@ -72,24 +77,21 @@ export function tickSpawner(state, dt) {
 }
 
 export function advanceRound(state) {
-  if (state.phase === "spawning") {
-    return { ...state, phase: "waiting", spawnTimer: 0 };
+  switch (state.phase) {
+    case "spawning":
+      return { ...state, phase: "waiting", spawnTimer: 0 };
+    case "waiting":
+      return {
+        round: state.round + 1,
+        phase: "intermission",
+        toSpawn: 0,
+        alive: 0,
+        spawnTimer: 0,
+        roundTimer: INTERMISSION_SECONDS,
+      };
+    case "intermission":
+      return createSpawnState(state.round);
+    default:
+      return state;
   }
-
-  if (state.phase === "waiting") {
-    return {
-      round: state.round + 1,
-      phase: "intermission",
-      toSpawn: 0,
-      alive: 0,
-      spawnTimer: 0,
-      roundTimer: INTERMISSION_SECONDS,
-    };
-  }
-
-  if (state.phase === "intermission") {
-    return createSpawnState(state.round);
-  }
-
-  return state;
 }
