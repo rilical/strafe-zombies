@@ -65,6 +65,14 @@
   const hud = document.getElementById("hud");
   const overlay = document.getElementById("overlay");
 
+  // Cached gradients for the sky/floor backdrop and the screen-edge vignette.
+  const skyGrad = ctx.createLinearGradient(0, -8, 0, H / 2);
+  skyGrad.addColorStop(0, "#07080c"); skyGrad.addColorStop(1, "#1b211a");
+  const floorGrad = ctx.createLinearGradient(0, H / 2, 0, H + 8);
+  floorGrad.addColorStop(0, "#20241d"); floorGrad.addColorStop(1, "#0e0f10");
+  const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.72);
+  vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,0.55)");
+
   // ---- Tunables (MVP integration config; round/level scaling arrives with those modules) ----
   const FOV = 0.66;            // camera-plane half-width (~66° field of view)
   const MOVE = 2.8;            // player units / second
@@ -87,6 +95,7 @@
   const SPAWN_INTERVAL = 2.2;  // seconds between spawns while under the cap
 
   const WALL_COLORS = [null, [176, 58, 58], [70, 120, 70], [70, 100, 150]];
+  const FOG = [16, 20, 16];     // distant walls fade toward this sickly tone, not black
   const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
 
   // ---- Mutable game state (player matches the frozen GameState contract) ----
@@ -299,32 +308,63 @@
     ctx.save();
     ctx.translate(sh.x, sh.y);
 
-    ctx.fillStyle = "#15151b"; ctx.fillRect(-ov, -ov, W + 2 * ov, H / 2 + ov);    // ceiling
-    ctx.fillStyle = "#2c2c30"; ctx.fillRect(-ov, H / 2, W + 2 * ov, H / 2 + ov);  // floor
+    ctx.fillStyle = skyGrad; ctx.fillRect(-ov, -ov, W + 2 * ov, H / 2 + ov);     // ceiling
+    ctx.fillStyle = floorGrad; ctx.fillRect(-ov, H / 2, W + 2 * ov, H / 2 + ov); // floor
+
+    // Torch flicker: a subtle global light wobble applied to the wall shading.
+    const flicker = 0.85 + 0.1 * (0.5 + 0.5 * Math.sin(nowMs * 0.012)) + (Math.random() - 0.5) * 0.05;
 
     for (let x = 0; x < W; x++) {
       const cameraX = (2 * x) / W - 1;
-      const hit = castRay(MAP, player.x, player.y,
-        dirX + planeX * cameraX, dirY + planeY * cameraX);
+      const rdx = dirX + planeX * cameraX, rdy = dirY + planeY * cameraX;
+      const hit = castRay(MAP, player.x, player.y, rdx, rdy);
       const dist = Math.max(hit.perpWallDist, 0.0001);
       zbuffer[x] = dist;
 
-      const lineHeight = Math.floor(H / dist);
-      let drawStart = Math.floor(-lineHeight / 2 + H / 2);
+      const lineHeight = H / dist;
+      const sliceTop = -lineHeight / 2 + H / 2;      // unclamped top, for texture coords
+      let drawStart = Math.floor(sliceTop);
       let drawEnd = Math.floor(lineHeight / 2 + H / 2);
       if (drawStart < 0) drawStart = 0;
       if (drawEnd > H) drawEnd = H;
 
+      // Fractional hit position along the wall face (0..1) → horizontal texture coord.
+      let wallX = hit.side === 0 ? player.y + dist * rdy : player.x + dist * rdx;
+      wallX -= Math.floor(wallX);
+
+      // Per-cell tint (so adjacent bricks differ) + a vertical mortar groove.
+      const cellHash = ((hit.mapX * 73856093) ^ (hit.mapY * 19349663)) >>> 0;
+      const tint = 0.85 + (cellHash & 255) / 255 * 0.3;
+      const vmortar = wallX % 0.5 < 0.045 ? 0.6 : 1;
+      const fog = Math.min(1, Math.pow(dist / MAX_VIEW, 1.3));
+      const light = (hit.side === 1 ? 0.7 : 1) * flicker * tint * vmortar;
+
       const base = WALL_COLORS[hit.wall] || WALL_COLORS[1];
-      const k = (hit.side === 1 ? 0.65 : 1) * Math.max(0.15, 1 - dist / MAX_VIEW);
-      ctx.fillStyle = rgb(base[0] * k, base[1] * k, base[2] * k);
+      // Fade the lit colour toward the sickly fog tone with distance (not toward black).
+      ctx.fillStyle = rgb(
+        base[0] * light * (1 - fog) + FOG[0] * fog,
+        base[1] * light * (1 - fog) + FOG[1] * fog,
+        base[2] * light * (1 - fog) + FOG[2] * fog);
       ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+
+      // Brick courses + a band of ground ambient occlusion (only when the slice is tall).
+      if (drawEnd - drawStart > 6) {
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        for (let c = 1; c < 4; c++) {
+          const my = Math.floor(sliceTop + (c / 4) * lineHeight);
+          if (my > drawStart && my < drawEnd) ctx.fillRect(x, my, 1, 1);
+        }
+        const aoH = Math.max(1, (drawEnd - drawStart) * 0.06);
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(x, drawEnd - aoH, 1, aoH);
+      }
     }
 
     drawZombies();
     drawParticles();
     ctx.restore();                 // end the world-shake layer; UI below is steady
 
+    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);   // darken the screen edges
     drawWeapon();
     if (nowMs - player.lastDamageMs < 350) drawHurt();
     drawEdgeHint();
