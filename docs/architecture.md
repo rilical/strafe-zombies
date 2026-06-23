@@ -72,8 +72,10 @@ The points-and-purchase chain. Each is pure and unit-tested; `index.html` only s
   `pointsForHit`/`pointsForKill`.
 - `weapons.js` — the `WEAPONS` data table and `buyWallWeapon`/`rollMysteryBox` (grant + equip
   at full ammo; **neither charges** — wiring composes `economy.spend` first).
-- `perks.js` — `PERKS` and `grantPerk` + the `effective*` stat multipliers (Juggernog raises
-  the HP cap; Speed Cola / Double Tap effects are a later wiring task).
+- `perks.js` — `PERKS` and `grantPerk` + the `effective*` stat multipliers: Juggernog raises
+  the HP cap (`effectiveMaxHp`), Speed Cola shortens reloads (`effectiveReloadMs`), Double Tap
+  raises fire rate (`effectiveRpm`). `weapons.fire`/`startReload` take optional `{rpm}`/
+  `{reloadMs}` overrides so `index.html` can feed these in without the table changing.
 - `interact.js` — `findInteractable(level, world, player)` returns the nearest in-reach buyable
   (mount / box / perk / debris) so `index.html` stays rule-free. It hides already-open doors
   and owned perks, which is why `LEVEL.perkMachines` perkIds and `LEVEL.mounts` weaponIds must
@@ -83,6 +85,21 @@ The points-and-purchase chain. Each is pure and unit-tested; `index.html` only s
 `spend`, then dispatches by kind (buy the wall gun / roll the box / pour the perk / open the
 door + zero its `dynMap` cells and force a flow-field rebuild). The HUD shows the nearest
 buyable as a prompt, greyed when unaffordable.
+
+### Power-ups — `powerups.js`
+The classic on-kill drops. Pure and unit-tested; `index.html` sequences them:
+- `maybeDrop(zombie, rng)` — rolls the ~3% on-kill chance and returns a floor drop (`{type, x,
+  y, ttl}`) or `null`. Called at the shot-kill seam.
+- `tickPowerUps(state, dt)` — ages floor-drop lifetimes and counts down the active timed
+  effects (clamped at 0) without mutating state.
+- `applyNuke(zombies) → { zombies, points }` — removes the living and awards a flat bonus.
+- `applyMaxAmmo(player)` — refills every owned weapon's mag + reserve.
+- `activate(active, type, secs)` — starts/refreshes a timed effect (Insta-Kill / Double Points).
+
+`index.html` pushes a drop on kill, ticks the drops each frame, and collects one when the
+player walks within `PICKUP_RANGE`, routing it to the helper above. Insta-Kill overrides the
+shot's damage so any hit is lethal; Double Points doubles every award; drops render as hovering
+colour-coded diamonds and active timers tick down in the HUD.
 
 ### `index.html`
 - Owns player state, the input map, the rAF loop, and all drawing.
