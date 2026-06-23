@@ -19,9 +19,6 @@ export function tickShake(trauma, dt, decay = 1.5) {
  */
 export function shakeOffset(trauma, maxPx, rng = Math.random) {
   const amt = trauma * trauma * maxPx;
-  if (amt === 0) {
-    return { x: 0, y: 0 };
-  }
   return {
     x: amt * (rng() * 2 - 1),
     y: amt * (rng() * 2 - 1),

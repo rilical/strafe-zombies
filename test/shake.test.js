@@ -37,8 +37,8 @@ describe("shakeOffset — pixel offset with trauma² scaling", () => {
 
   it("returns zero offset when trauma is 0", () => {
     const offset = shakeOffset(0, 10);
-    expect(offset.x).toEqual(0);
-    expect(offset.y).toEqual(0);
+    expect(offset.x).toBeCloseTo(0, 6);
+    expect(offset.y).toBeCloseTo(0, 6);
   });
 
   it("scales magnitude with trauma²", () => {
@@ -97,6 +97,19 @@ describe("shakeOffset — pixel offset with trauma² scaling", () => {
     expect(callCount).toBe(2); // Must call rng twice (once for x, once for y)
   });
 
+  it("always calls rng exactly twice, even when trauma is 0", () => {
+    let callCount = 0;
+    const rngStub = () => {
+      callCount++;
+      return 0.5;
+    };
+
+    const offset = shakeOffset(0, 10, rngStub);
+    expect(callCount).toBe(2); // Must call rng twice even when amt=0
+    expect(offset.x).toBeCloseTo(0, 6);
+    expect(offset.y).toBeCloseTo(0, 6);
+  });
+
   it("uses default Math.random when rng not provided", () => {
     const offset = shakeOffset(0.5, 10);
     // Should not throw and should produce a valid offset object
@@ -104,5 +117,13 @@ describe("shakeOffset — pixel offset with trauma² scaling", () => {
     expect(offset).toHaveProperty("y");
     expect(typeof offset.x).toBe("number");
     expect(typeof offset.y).toBe("number");
+    // Assert both x and y are finite
+    expect(Number.isFinite(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+    // Assert both are bounded: amt = 0.5² * 10 = 2.5
+    const maxAmt = 2.5;
+    const tolerance = 1e-9;
+    expect(Math.abs(offset.x)).toBeLessThanOrEqual(maxAmt + tolerance);
+    expect(Math.abs(offset.y)).toBeLessThanOrEqual(maxAmt + tolerance);
   });
 });
