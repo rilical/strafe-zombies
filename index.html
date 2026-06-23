@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>STRAFE — raycaster baseplate</title>
+<title>STRAFE — Nacht (MVP kill loop)</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #screen {
@@ -11,136 +11,1095 @@
     width: 100vw; height: 100vh;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
+    cursor: none;            /* we draw our own crosshair at the pointer position */
   }
   #hud {
-    position: fixed; top: 10px; left: 12px;
-    font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
-    color: #b9f; text-shadow: 0 1px 2px #000; pointer-events: none;
+    position: fixed; top: 14px; left: 16px; pointer-events: none;
+    color: #ffd54a; text-shadow: 0 2px 4px #000;
+  }
+  #points {
+    font: 800 34px ui-monospace, Menlo, Consolas, monospace; line-height: 1;
+    letter-spacing: 1px; transform-origin: left center;
+  }
+  #points.pop { animation: pop .18s ease-out; }
+  @keyframes pop { 0% { transform: scale(1.6); color: #fff; } 100% { transform: scale(1); } }
+  #round { margin-top: 6px; font: 700 13px ui-monospace, monospace; color: #b98; letter-spacing: 3px; }
+  #round b { color: #e23b2e; }
+  /* Active power-up timers (Insta-Kill / Double Points) tick down under the round line. */
+  #powerups {
+    margin-top: 8px; font: 800 13px ui-monospace, monospace; color: #7ad9ff;
+    letter-spacing: 2px; opacity: 0; transition: opacity .12s;
+  }
+  #powerups.show { opacity: 1; }
+  #ammo {
+    position: fixed; right: 18px; bottom: 16px; text-align: right; pointer-events: none;
+    color: #fff; text-shadow: 0 2px 4px #000; font: 800 40px ui-monospace, monospace; line-height: .85;
+  }
+  #ammo small { font-size: 18px; color: #9ab; }
+  #ammo.empty #mag { color: #e44; }
+  #ammo #weapon { font: 700 11px ui-monospace, monospace; color: #ffd54a; letter-spacing: 2px; margin-bottom: 3px; }
+  #lowhp {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s;
+    background: radial-gradient(ellipse at center, rgba(120,0,0,0) 42%, rgba(120,0,0,.6) 100%);
+  }
+  #lowhp.show { opacity: 1; animation: heartbeat 1.1s ease-in-out infinite; }
+  @keyframes heartbeat { 0%, 100% { opacity: .45; } 50% { opacity: .95; } }
+  #crt {
+    position: fixed; inset: 0; pointer-events: none; z-index: 60; opacity: .5; mix-blend-mode: multiply;
+    background:
+      repeating-linear-gradient(to bottom, rgba(0,0,0,.18) 0, rgba(0,0,0,.18) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 3px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(0,0,0,.4) 100%);
   }
   #hint {
     position: fixed; bottom: 12px; left: 0; right: 0; text-align: center;
     font: 12px ui-monospace, monospace; color: #89a; text-shadow: 0 1px 2px #000;
     pointer-events: none;
   }
+  #buyprompt {
+    position: fixed; bottom: 40px; left: 0; right: 0; text-align: center;
+    font: 700 16px ui-monospace, monospace; color: #ffd54a; text-shadow: 0 2px 4px #000;
+    pointer-events: none; opacity: 0; transition: opacity .12s;
+  }
+  #buyprompt.show { opacity: 1; }
+  #buyprompt.poor { color: #e2706b; }   /* in range but can't afford it yet */
+  #overlay {
+    position: fixed; inset: 0; display: none; z-index: 70;
+    flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    background: rgba(25, 0, 0, 0.55);
+    color: #e44; font: 700 30px ui-monospace, monospace; text-shadow: 0 2px 6px #000;
+    letter-spacing: 2px;
+  }
+  #overlay.show { display: flex; }
+  #overlay small { color: #d9b3b3; font-weight: 400; font-size: 14px; letter-spacing: 0; }
 </style>
 </head>
 <body>
   <canvas id="screen" width="320" height="200"></canvas>
-  <div id="hud"></div>
-  <div id="hint">W/S move &nbsp;·&nbsp; A/D turn &nbsp;·&nbsp; Q/E strafe</div>
+  <div id="lowhp"></div>
+  <div id="hud"><div id="points">0</div><div id="round">ROUND <b>1</b></div><div id="powerups"></div></div>
+  <div id="ammo"><div id="weapon"></div><span id="mag">0</span> <small id="reserve">/ 0</small></div>
+  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims the gun &nbsp;·&nbsp; screen edges turn &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload &nbsp;·&nbsp; F buy</div>
+  <div id="buyprompt"></div>
+  <div id="overlay"></div>
+  <div id="crt"></div>
 
   <script type="module">
-  import { MAP, MAP_W, MAP_H, castRay, moveWithCollision } from "./src/engine.js";
+  // ---------------------------------------------------------------------------
+  // index.html is the *integration layer*: input, rendering, and the game loop.
+  // It contains NO game rules — every rule (chase, fire cadence, hit detection,
+  // damage, scoring, projection) lives in the unit-tested pure modules in src/.
+  // This file only wires those functions to the canvas and keyboard/mouse.
+  // ---------------------------------------------------------------------------
+  import { castRay, moveWithCollision } from "./src/engine.js";
+  import { LEVEL } from "./src/level.js";
+  import { createWorld, isBlocked, openDoor, tearBoard, repairBoard } from "./src/barriers.js";
+  import { createSpawnState, tickSpawner, advanceRound,
+           zombieHealthForRound, zombieSpeedForRound } from "./src/rounds.js";
+  import { buildFlowField, stepZombieAlong } from "./src/pathfind.js";
+  import { WEAPONS, fire as fireWeapon, startReload, tickReload,
+           buyWallWeapon, rollMysteryBox } from "./src/weapons.js";
+  import { resolveShot, shootRay } from "./src/shooting.js";
+  import { isHeadshot } from "./src/hitzones.js";
+  import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
+  import { earn, spend } from "./src/economy.js";
+  import { PERKS, grantPerk, effectiveMaxHp, effectiveRpm, effectiveReloadMs } from "./src/perks.js";
+  import { findInteractable } from "./src/interact.js";
+  import { maybeDrop, tickPowerUps, applyNuke, applyMaxAmmo, activate } from "./src/powerups.js";
+  import { projectSprites, projectSprite } from "./src/sprites.js";
+  import { tickShake, shakeOffset } from "./src/shake.js";
+  import { spawnPopup, tickPopups } from "./src/popups.js";
+  import { spawnBloodPuff, spawnSpark, tickParticles } from "./src/particles.js";
+  import { buildVoice } from "./src/sfx.js";
+  import { addDecal, tickDecals, projectWallDecal, projectFloorDecal } from "./src/decals.js";
+  import { buyableMarkers } from "./src/markers.js";
+  import { windowPoints, pickWindow, tickBreak, findRepairableWindow,
+           REPAIR_REWARD, MAX_BOARDS } from "./src/barricades.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
   const W = canvas.width, H = canvas.height;
-  const hud = document.getElementById("hud");
+  const overlay = document.getElementById("overlay");
+  const pointsEl = document.getElementById("points");
+  const roundEl = document.getElementById("round");
+  const ammoEl = document.getElementById("ammo");
+  const magEl = document.getElementById("mag");
+  const reserveEl = document.getElementById("reserve");
+  const weaponEl = document.getElementById("weapon");
+  const lowhpEl = document.getElementById("lowhp");
+  const buypromptEl = document.getElementById("buyprompt");
+  const powerupsEl = document.getElementById("powerups");
+  let lastPoints = -1;
+  // HUD labels for the two timed power-ups (the only entries activate() ever stores).
+  const POWERUP_LABELS = { instaKill: "INSTA-KILL", doublePoints: "2× POINTS" };
 
-  // Player state (map units + heading in radians).
-  let posX = 2.5, posY = 2.5, angle = 0.4;
-  const FOV = 0.66;            // camera-plane half-width (~66° field of view)
-  const MOVE = 2.6;            // units / second
-  const TURN = 2.4;            // radians / second
-  const MAX_VIEW = 16;         // distance fog falls off over this many cells
+  // Cached gradients for the sky/floor backdrop and the screen-edge vignette.
+  const skyGrad = ctx.createLinearGradient(0, -8, 0, H / 2);
+  skyGrad.addColorStop(0, "#07080c"); skyGrad.addColorStop(1, "#1b211a");
+  const floorGrad = ctx.createLinearGradient(0, H / 2, 0, H + 8);
+  floorGrad.addColorStop(0, "#20241d"); floorGrad.addColorStop(1, "#0e0f10");
+  const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.72);
+  vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,0.55)");
 
-  // Base colors per wall type; index 0 unused.
-  const WALL_COLORS = [null, [176, 58, 58], [70, 120, 70], [70, 100, 150]];
-
-  const keys = Object.create(null);
-  addEventListener("keydown", (e) => { keys[e.code] = true; });
-  addEventListener("keyup", (e) => { keys[e.code] = false; });
-
-  function update(dt) {
-    if (keys.KeyA || keys.ArrowLeft) angle -= TURN * dt;
-    if (keys.KeyD || keys.ArrowRight) angle += TURN * dt;
-
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    let mx = 0, my = 0;
-    if (keys.KeyW || keys.ArrowUp)   { mx += dirX; my += dirY; }
-    if (keys.KeyS || keys.ArrowDown) { mx -= dirX; my -= dirY; }
-    if (keys.KeyQ) { mx += dirY; my -= dirX; }   // strafe left
-    if (keys.KeyE) { mx -= dirY; my += dirX; }   // strafe right
-
-    const len = Math.hypot(mx, my);
-    if (len > 0) {
-      mx = (mx / len) * MOVE * dt;
-      my = (my / len) * MOVE * dt;
-      const p = moveWithCollision(MAP, posX, posY, mx, my);
-      posX = p.x; posY = p.y;
+  // ---- Procedural audio (WebAudio) ----
+  // src/sfx.js owns the recipes; index.html owns the AudioContext + node scheduling.
+  // buildVoice(name) → { dur, layers:[{ wave, freq:[[t,hz]], gain:[[t,level]] }] }; each layer
+  // becomes one oscillator (or low-pass-filtered white-noise burst) whose pitch + gain follow
+  // the breakpoint curves. The context is created lazily on the first gesture so browsers
+  // allow playback; an unknown preset name is a silent no-op.
+  const SFX_GAIN = 0.32;                 // master mix level for every sound effect
+  let audioCtx = null, noiseBuf = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  function noiseBuffer(ac) {
+    if (!noiseBuf) {
+      const n = (ac.sampleRate * 0.5) | 0, b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+      noiseBuf = b;
+    }
+    return noiseBuf;
+  }
+  function playSfx(name) {
+    const ac = ensureAudio();
+    if (!ac) return;
+    let voice;
+    try { voice = buildVoice(name); } catch { return; }   // unknown preset → silent no-op
+    const t0 = ac.currentTime, end = t0 + voice.dur + 0.02;
+    for (const layer of voice.layers) {
+      const gain = ac.createGain();
+      gain.connect(ac.destination);
+      const gp = layer.gain;
+      gain.gain.setValueAtTime(Math.max(0, gp[0][1]) * SFX_GAIN, t0);
+      for (const [t, level] of gp) gain.gain.linearRampToValueAtTime(Math.max(0, level) * SFX_GAIN, t0 + t);
+      let src, freqParam;
+      if (layer.wave === "noise") {        // white noise through a sweepable low-pass
+        src = ac.createBufferSource(); src.buffer = noiseBuffer(ac); src.loop = true;
+        const lp = ac.createBiquadFilter(); lp.type = "lowpass";
+        freqParam = lp.frequency; src.connect(lp); lp.connect(gain);
+      } else {                              // tonal layer → matching oscillator
+        src = ac.createOscillator(); src.type = layer.wave;
+        freqParam = src.frequency; src.connect(gain);
+      }
+      const fp = layer.freq;
+      freqParam.setValueAtTime(fp[0][1], t0);
+      for (const [t, hz] of fp) freqParam.linearRampToValueAtTime(hz, t0 + t);
+      src.start(t0); src.stop(end);
     }
   }
 
+  // ---- Tunables (presentation + contact feel; round/level scaling now live in src/) ----
+  const FOV = 0.66;            // camera-plane half-width (~66° field of view)
+  const MOVE = 2.8;            // player units / second
+  const TURN = 2.6;            // arrow-key turn radians / second (mouse edge-zones also turn)
+  const EDGE = 0.12;          // fraction of screen width on each side that steers the view
+  const EDGE_TURN = 2.8;      // max turn radians / second at the very edge (free-aim 360°)
+  const MAX_VIEW = 16;         // distance fog falls off over this many cells
+  const MAX_SHAKE_PX = 5;      // peak screen-shake translation (px) at full trauma
+  const CORPSE_MS = 700;       // how long a slain zombie's body fades on the floor
+
+  const CONTACT_RANGE = 1.0;   // a zombie that reaches your cell claws you (the flow field
+                               //   navigates at cell granularity, so this is ~one cell)
+  const CONTACT_DAMAGE = 50;   // spec: two claws down a 100-HP player (survival owns the math)
+  const HIT_COOLDOWN_MS = 750; // per-zombie delay between claws
+  const PICKUP_RANGE = 1.2;    // walk this close to a floor drop to collect the power-up
+
+  // Zombies enter through the boarded windows: a shambler appears OUTSIDE its window
+  // and rips the planks off (barricades.js owns the tear timing) before climbing in to
+  // the interior cell and joining the flow-field chase. Every room is reachable from the
+  // spawn, so the field can train any climbed-in zombie straight to the player.
+
+  // Wall tints by grid value: 1 = Nacht brick, 2 = heavy stone core, 3 = debris rubble.
+  const WALL_COLORS = [null, [176, 58, 58], [104, 102, 116], [120, 86, 52]];
+  const FOG = [16, 20, 16];     // distant walls fade toward this sickly tone, not black
+  const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
+
+  // ---- Mutable game state (player matches the frozen GameState contract) ----
+  let player, zombies, nextZombieId, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
+  let world, spawnState, flowField, flowCol, flowRow;   // barrier overlay, rounds SM, BFS field
+  let dynMap, buyTarget, buyMsg, buyMsgT;   // live map (opened doors), current buyable, buy cue
+  let powerUps, activePowerUps, nukeFlash, announcedRound;  // floor drops, timed effects, nuke flash, round-howl latch
+  let trauma, popups, blood, sparks, decals;   // game-juice state: shake, +N popups, particles, persistent decals
+  let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
+  // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
+  let cursorX = W / 2, cursorY = H / 2;
+
+  function freshPlayer() {
+    const w = WEAPONS.m1911;
+    return {
+      x: LEVEL.spawn.x, y: LEVEL.spawn.y, angle: LEVEL.spawn.angle,
+      hp: 100, maxHp: 100, points: 500,
+      weapon: "m1911",
+      ammo: { m1911: { mag: w.magSize, reserve: w.reserve } },
+      lastShotMs: undefined, reloadTimer: undefined, lastDamageMs: -1e9,
+      perks: new Set(),
+    };
+  }
+
+  function reset() {
+    player = freshPlayer();
+    zombies = [];
+    nextZombieId = 1;
+    world = createWorld(LEVEL);             // mutable barrier overlay (doors/boards)
+    dynMap = LEVEL.grid.map((row) => row.slice());   // live map; opened doors get zeroed in
+    spawnState = createSpawnState(1);       // rounds.js owns wave pacing + escalation
+    flowField = null; flowCol = -1; flowRow = -1;   // forces a field build on frame 1
+    buyTarget = null; buyMsg = ""; buyMsgT = 0;     // no buyable in reach, no purchase cue
+    powerUps = []; activePowerUps = {}; nukeFlash = 0; announcedRound = 0;   // no drops/timers/flash; round 1 will howl
+    gameOver = false;
+    muzzleFlash = 0;
+    hitMarker = 0;
+    headshotFlash = 0;
+    nowMs = 0;
+    trauma = 0; popups = []; blood = []; sparks = []; decals = [];
+    hitFlash = {}; corpses = []; bobPhase = 0; recoil = 0; moving = false;
+    overlay.classList.remove("show");
+  }
+  reset();
+
+  // ---- Input ----
+  const keys = Object.create(null);
+  addEventListener("keydown", (e) => {
+    keys[e.code] = true;
+    if (e.code === "KeyR" && !gameOver) tryStartReload();
+    if (e.code === "KeyF" && !e.repeat && !gameOver) tryBuy();
+    if (e.code === "Enter" && gameOver) reset();
+  });
+  addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  // No pointer-lock: the visible cursor drives the gun. Map the page pointer into
+  // canvas pixels so the crosshair lines up with the column the raycaster renders.
+  function trackCursor(e) {
+    const r = canvas.getBoundingClientRect();
+    cursorX = Math.max(0, Math.min(W, ((e.clientX - r.left) / r.width) * W));
+    cursorY = Math.max(0, Math.min(H, ((e.clientY - r.top) / r.height) * H));
+  }
+  addEventListener("mousemove", trackCursor);
+
+  // Trigger discipline (input glue): auto weapons fire while held, semi-autos once
+  // per click. weapons.fire still enforces the rpm cadence; the FIRST click fires.
+  let triggerHeld = false, triggerEdge = false;
+  canvas.addEventListener("mousedown", (e) => {
+    trackCursor(e);
+    ensureAudio();                       // unlock WebAudio on the first user gesture
+    if (gameOver) { reset(); return; }
+    triggerHeld = true; triggerEdge = true;
+  });
+  addEventListener("mouseup", () => { triggerHeld = false; });
+  overlay.addEventListener("mousedown", () => { if (gameOver) reset(); });
+
+  // ---- Weapon-state composition seam (per docs/agents/README.md) ----
+  // weapons.* operate on a flat { id, mag, reserve, reloadTimer, lastShotMs };
+  // compose it from the player, run the module, then write the fields back.
+  function composeWeapon() {
+    const a = player.ammo[player.weapon];
+    return { id: player.weapon, mag: a.mag, reserve: a.reserve,
+             reloadTimer: player.reloadTimer, lastShotMs: player.lastShotMs };
+  }
+  function writeWeapon(s) {
+    player = {
+      ...player,
+      ammo: { ...player.ammo, [player.weapon]: { mag: s.mag, reserve: s.reserve } },
+      reloadTimer: s.reloadTimer, lastShotMs: s.lastShotMs,
+    };
+  }
+  // Perk-adjusted cadence/reload for the equipped gun (Double Tap rpm, Speed Cola reload);
+  // both fall back to the WEAPONS table when the player owns no matching perk.
+  const perkRpm = () => effectiveRpm(player, WEAPONS[player.weapon].rpm);
+  const perkReloadMs = () => effectiveReloadMs(player, WEAPONS[player.weapon].reloadMs);
+  function tryStartReload() {
+    const wasReloading = player.reloadTimer !== undefined;
+    writeWeapon(startReload(composeWeapon(), nowMs, { reloadMs: perkReloadMs() }));
+    if (!wasReloading && player.reloadTimer !== undefined) playSfx("reload");  // only on a fresh reload
+  }
+
+  // ---- Buying (input glue) ----
+  // interact.findInteractable decides WHAT is in reach (the rule); economy.spend gates
+  // the points; then the owning module grants the gun / rolls the box / pours the perk /
+  // opens the door. No buy rules live here — index.html only sequences the pure calls.
+  function tryBuy() {
+    const it = findInteractable(LEVEL, world, player);
+    if (!it) {                                        // no buyable in reach — maybe a window to re-board?
+      const win = findRepairableWindow(LEVEL, world, player);
+      if (win) {
+        world = repairBoard(world, win.id);           // nail one plank back on
+        player = earn(player, REPAIR_REWARD);         // Nacht pays you to barricade
+        flashBuy("+" + REPAIR_REWARD + " REPAIR");
+        playSfx("buy");
+      }
+      return;
+    }
+    if (player.points < it.cost) { playSfx("deny"); return; }   // in reach but can't afford
+    const paid = spend(player, it.cost);
+    if (!paid.ok) { playSfx("deny"); return; }
+    player = paid.player;
+    if (it.kind === "mount") {
+      player = buyWallWeapon(player, it.weaponId);          // grant + equip at full ammo
+      player = { ...player, reloadTimer: undefined, lastShotMs: undefined };  // fresh gun
+      flashBuy(WEAPONS[it.weaponId].name);
+    } else if (it.kind === "box") {
+      const roll = rollMysteryBox(player, Math.random);     // random weapon, then equip
+      player = { ...roll.player, reloadTimer: undefined, lastShotMs: undefined };
+      flashBuy(WEAPONS[roll.weaponId].name + "!");
+    } else if (it.kind === "perk") {
+      player = grantPerk(player, it.perkId);
+      player = { ...player, maxHp: effectiveMaxHp(player) }; // Juggernog raises the HP cap
+      flashBuy(PERKS[it.perkId].name);
+    } else if (it.kind === "debris") {
+      world = openDoor(world, it.id);                       // barrier overlay: door now open
+      const door = LEVEL.debris.find((d) => d.id === it.id);
+      for (const [cx, cy] of door.cells) dynMap[cy][cx] = 0; // reveal the passage for the player
+      flowField = null;                                     // force a flow-field rebuild
+      flashBuy("DOOR OPEN");
+    }
+    playSfx(it.kind === "debris" ? "door" : "buy");          // purchase confirm (rumble for doors)
+  }
+  function flashBuy(text) { buyMsg = text; buyMsgT = 1.4; }   // brief centred confirmation cue
+
+  // Display name for the buy prompt — reads the owning module's data so labels never drift.
+  function buyLabel(it) {
+    if (it.kind === "mount") return WEAPONS[it.weaponId].name;
+    if (it.kind === "box")   return "Mystery Box";
+    if (it.kind === "perk")  return PERKS[it.perkId].name;
+    return "Open Door";   // debris
+  }
+
+  // ---- Simulation: fixed timestep. All rules come from the imported modules. ----
+  function simulate(dt) {
+    nowMs += dt * 1000;
+
+    // Turn: cursor edge-zones steer the view for full 360° (arrow keys still work).
+    let turn = 0;
+    const lz = EDGE * W, rz = (1 - EDGE) * W;
+    if (cursorX < lz) turn -= EDGE_TURN * (1 - cursorX / lz);
+    else if (cursorX > rz) turn += EDGE_TURN * ((cursorX - rz) / (W - rz));
+    if (keys.ArrowLeft) turn -= TURN;
+    if (keys.ArrowRight) turn += TURN;
+    if (turn !== 0) player = { ...player, angle: player.angle + turn * dt };
+
+    // Movement: W/S forward/back, A/D strafe (kiting preserved).
+    const dirX = Math.cos(player.angle), dirY = Math.sin(player.angle);
+    let mx = 0, my = 0;
+    if (keys.KeyW) { mx += dirX; my += dirY; }
+    if (keys.KeyS) { mx -= dirX; my -= dirY; }
+    if (keys.KeyA) { mx += dirY; my -= dirX; }   // strafe left
+    if (keys.KeyD) { mx -= dirY; my += dirX; }   // strafe right
+    const len = Math.hypot(mx, my);
+    if (len > 0) {
+      const p = moveWithCollision(dynMap, player.x, player.y,
+        (mx / len) * MOVE * dt, (my / len) * MOVE * dt);
+      player = { ...player, x: p.x, y: p.y };
+    }
+    moving = len > 0;
+    if (moving) bobPhase += dt * 9;       // view-bob advances with the player's strides
+
+    // Free-aim: derive the shot direction from the same camera ray the renderer uses
+    // for the crosshair's column, so the bullet lands exactly where the crosshair sits.
+    const cameraX = (2 * cursorX) / W - 1;
+    const aimAngle = Math.atan2(dirY + dirX * FOV * cameraX, dirX - dirY * FOV * cameraX);
+
+    // Reload progress (completes once weapons' internal timer elapses).
+    writeWeapon(tickReload(composeWeapon(), nowMs));
+
+    // Firing: weapons.fire gates cadence/ammo; shooting.resolveShot picks the target.
+    const weapon = WEAPONS[player.weapon];
+    const wantFire = weapon.auto ? triggerHeld : triggerEdge;
+    triggerEdge = false;
+    if (wantFire) {
+      const ws = composeWeapon();
+      if (ws.mag === 0 && ws.reloadTimer === undefined) {
+        writeWeapon(startReload(ws, nowMs, { reloadMs: perkReloadMs() })); // empty → auto-reload
+        if (player.reloadTimer !== undefined) playSfx("reload");
+      } else {
+        const { state, didFire } = fireWeapon(ws, nowMs, { rpm: perkRpm() });
+        if (didFire) {
+          writeWeapon(state);
+          playSfx("shoot");
+          muzzleFlash = 0.05;
+          recoil = 1;                             // weapon kick + crosshair bloom
+          trauma = Math.min(1, trauma + 0.16);    // every shot kicks the camera a little
+          // Pre-resolve the target so the crosshair's vertical aim decides a headshot
+          // BEFORE damage lands (resolveShot needs the boolean to double damage).
+          // shootRay (src/shooting.js) picks WHICH zombie; isHeadshot (src/hitzones.js)
+          // judges WHERE on it the crosshair sits — index.html just wires them together.
+          const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
+          const target = shootRay(dynMap, player.x, player.y, ca, sa, zombies);
+          let headshot = false;
+          if (target) {
+            const tp = projectSprite(player, FOV, W, H, target.zombie);
+            if (tp.visible) headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
+          }
+          // Insta-Kill (a timed power-up) makes any hit lethal by overriding the gun's damage;
+          // the kill still scores through resolveShot's normal kill bonus.
+          const shotWeapon = activePowerUps.instaKill > 0 ? { ...weapon, damage: 100000 } : weapon;
+          const res = resolveShot(dynMap, player, zombies, shotWeapon, aimAngle, { headshot });
+          if (res.hitId != null) {
+            // res.hitId names the exact zombie the bullet struck — no hp-diff guessing.
+            const hz = res.zombies.find((z) => z.id === res.hitId);
+            // Double Points (a timed power-up) doubles every award while it's running.
+            const ptMult = activePowerUps.doublePoints > 0 ? 2 : 1;
+            const gained = res.scoreDelta * ptMult;
+            if (hz) {
+              hitFlash[hz.id] = nowMs;                                // white flash on the hit
+              blood = spawnBloodPuff(blood, hz.x, hz.y);              // spray at the world hit
+              const pr = projectSprite(player, FOV, W, H, hz);
+              if (pr.visible) popups = spawnPopup(popups, pr.screenX, pr.drawStartY, gained);
+              if (res.killedId != null) {
+                corpses.push({ x: hz.x, y: hz.y, bornMs: nowMs });
+                decals = addDecal(decals, { x: hz.x, y: hz.y, kind: "blood", ttl: 12 }, 96);  // blood pool dries over 12s
+                // Classic on-kill power-up roll: ~3% chance to leave a floor drop.
+                const drop = maybeDrop(hz, Math.random);
+                if (drop) powerUps.push(drop);
+              }
+              trauma = Math.min(1, trauma + (res.killedId != null ? 0.3 : 0.12) + (res.headshot ? 0.1 : 0));
+            }
+            if (res.headshot) headshotFlash = 0.6;   // gold crosshair X + "HEADSHOT" cue
+            player = earn(player, gained);
+            hitMarker = 0.12;
+            // One marker sound, prioritised kill > headshot > body-hit.
+            playSfx(res.killedId != null ? "kill" : (res.headshot ? "headshot" : "hit"));
+          } else {
+            // Missed every zombie → the bullet bites a wall; spark where it lands.
+            const wh = castRay(dynMap, player.x, player.y, ca, sa);
+            const d = Math.min(wh.perpWallDist, MAX_VIEW);
+            sparks = spawnSpark(sparks, player.x + ca * d, player.y + sa * d);
+            if (d < MAX_VIEW)   // a bullet that found a wall leaves a permanent hole
+              decals = addDecal(decals, { x: player.x + ca * d, y: player.y + sa * d, kind: "hole", ttl: Infinity }, 96);
+          }
+          zombies = res.zombies.filter((z) => z.hp > 0);
+        }
+      }
+    }
+
+    // Zombies path to the player along a BFS flow field (pathfind.js), routing around
+    // the core and walls instead of walking straight. Rebuild the field only when the
+    // player crosses into a new cell — it's a ~256-cell BFS, cheap but not per-frame free.
+    const pcol = Math.floor(player.x), prow = Math.floor(player.y);
+    if (!flowField || pcol !== flowCol || prow !== flowRow) {
+      flowField = buildFlowField(LEVEL, world, pcol, prow, isBlocked);
+      flowCol = pcol; flowRow = prow;
+    }
+    zombies = zombies.map((z) => {
+      const cool = Math.max(0, (z.hitCooldown || 0) - dt * 1000);
+      // Breaking zombies stand outside their window ripping planks; they don't path
+      // until the barricade is down, then they climb in to the interior cell and chase.
+      if (z.state === "breaking") {
+        const win = LEVEL.windows.find((w) => w.id === z.window);
+        const boards = world.windows[z.window] ?? 0;
+        if (boards <= 0) {                                       // already clear → climb straight in
+          const inside = windowPoints(win).inside;
+          return { ...z, x: inside.x, y: inside.y, state: "chase", tearTimer: 0, hitCooldown: cool };
+        }
+        const r = tickBreak(z.tearTimer || 0, boards, dt);       // advance the plank clock
+        for (let i = 0; i < r.tears; i++) world = tearBoard(world, z.window);   // planks come off
+        if (r.broken) {
+          const inside = windowPoints(win).inside;
+          playSfx("door");                                       // the barricade gives way
+          return { ...z, x: inside.x, y: inside.y, state: "chase", tearTimer: 0, hitCooldown: cool };
+        }
+        return { ...z, tearTimer: r.tearTimer, hitCooldown: cool };
+      }
+      const moved = stepZombieAlong(LEVEL, world, z, flowField, dt, z.speed, isBlocked);
+      return { ...moved, hitCooldown: cool };
+    });
+    for (let i = 0; i < zombies.length; i++) {
+      const z = zombies[i];
+      if (z.hitCooldown <= 0 && Math.hypot(z.x - player.x, z.y - player.y) < CONTACT_RANGE) {
+        player = applyContactDamage(player, CONTACT_DAMAGE, nowMs);
+        zombies[i] = { ...z, hitCooldown: HIT_COOLDOWN_MS };
+        trauma = Math.min(1, trauma + 0.5);          // getting clawed shakes hard
+        playSfx("hurt");
+      }
+    }
+
+    // Passive health regen (survival owns the 2s-delay / 3s-refill curve).
+    player = regen(player, nowMs);
+
+    // Round/wave control — rounds.js owns every pacing + escalation number; index.html
+    // only feeds the live zombie count back in and reacts to the phase transitions:
+    //   spawning → (all spawned) waiting → (all killed) intermission → (timer) next round.
+    spawnState = { ...spawnState, alive: zombies.length };
+    if (spawnState.phase === "spawning" && spawnState.round !== announcedRound) {
+      announcedRound = spawnState.round;             // one tension sting at the top of each round
+      playSfx("roundstart");
+    }
+    if (spawnState.phase === "spawning") {
+      const tick = tickSpawner(spawnState, dt);
+      spawnState = tick.state;
+      if (tick.shouldSpawn) {
+        const win = pickWindow(LEVEL.windows, world, Math.random);   // attack a still-boarded window
+        const out = windowPoints(win).outside;                       // shamble up from outside the wall
+        zombies.push({ id: nextZombieId++, x: out.x, y: out.y, angle: 0,
+                       hp: zombieHealthForRound(spawnState.round),
+                       speed: zombieSpeedForRound(spawnState.round),
+                       state: "breaking", window: win.id, tearTimer: 0, hitCooldown: 0 });
+        playSfx("groan");                            // a fresh shambler groans in (pitch varies)
+      }
+      if (spawnState.toSpawn === 0) spawnState = advanceRound(spawnState);  // → waiting
+    } else if (spawnState.phase === "waiting") {
+      if (zombies.length === 0) spawnState = advanceRound(spawnState);      // → intermission
+    } else if (spawnState.phase === "intermission") {
+      spawnState = { ...spawnState, roundTimer: (spawnState.roundTimer || 0) - dt };
+      if (spawnState.roundTimer <= 0) spawnState = advanceRound(spawnState); // → next round
+    }
+
+    // Power-ups: powerups.js owns the drop lifetimes + timer countdowns; index.html only
+    // detects pickups (walk within PICKUP_RANGE) and routes each type to its pure helper.
+    ({ powerUps, activePowerUps } = tickPowerUps({ powerUps, activePowerUps }, dt));
+    const keptDrops = [];
+    for (const d of powerUps) {
+      if (Math.hypot(d.x - player.x, d.y - player.y) > PICKUP_RANGE) { keptDrops.push(d); continue; }
+      playSfx("powerup");                            // pickup chime for any collected drop
+      if (d.type === "nuke") {
+        for (const z of zombies) corpses.push({ x: z.x, y: z.y, bornMs: nowMs }); // bodies drop
+        const nk = applyNuke(zombies);                  // clears the living, awards a flat bonus
+        zombies = nk.zombies;
+        player = earn(player, nk.points * (activePowerUps.doublePoints > 0 ? 2 : 1));
+        nukeFlash = 1; trauma = Math.min(1, trauma + 0.4); flashBuy("NUKE"); playSfx("nuke");
+      } else if (d.type === "maxAmmo") {
+        player = applyMaxAmmo(player); flashBuy("MAX AMMO");
+      } else if (d.type === "instaKill") {
+        activePowerUps = activate(activePowerUps, "instaKill"); flashBuy("INSTA-KILL");
+      } else if (d.type === "doublePoints") {
+        activePowerUps = activate(activePowerUps, "doublePoints"); flashBuy("DOUBLE POINTS");
+      }
+    }
+    powerUps = keptDrops;
+
+    trauma = tickShake(trauma, dt);                  // trauma decays; shake follows
+    blood = tickParticles(blood, dt);
+    sparks = tickParticles(sparks, dt);
+    decals = tickDecals(decals, dt);                 // age blood pools (cull on ttl); holes are permanent
+    popups = tickPopups(popups, dt);
+    recoil = Math.max(0, recoil - dt * 6);           // recoil settles in ~0.16s
+    corpses = corpses.filter((c) => nowMs - c.bornMs < CORPSE_MS);
+    for (const id in hitFlash) if (nowMs - hitFlash[id] > 200) delete hitFlash[id];
+    if (muzzleFlash > 0) muzzleFlash -= dt;
+    if (hitMarker > 0) hitMarker -= dt;
+    if (headshotFlash > 0) headshotFlash -= dt;
+    if (nukeFlash > 0) nukeFlash -= dt * 1.5;        // white nuke flash fades over ~0.7s
+    if (buyMsgT > 0) buyMsgT -= dt;
+    buyTarget = findInteractable(LEVEL, world, player);   // HUD prompt: nearest buyable in reach
+    if (isGameOver(player)) endGame();
+  }
+
+  function endGame() {
+    gameOver = true;
+    overlay.innerHTML = "YOU DIED<small>Score " + player.points +
+      " · click or press Enter to restart</small>";
+    overlay.classList.add("show");
+  }
+
+  // ---- Render ----
+  const zbuffer = new Float64Array(W);   // per-column wall depth, for sprite occlusion
+
   function render() {
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const dirX = Math.cos(player.angle), dirY = Math.sin(player.angle);
     const planeX = -dirY * FOV, planeY = dirX * FOV;
 
-    // Ceiling and floor.
-    ctx.fillStyle = "#15151b"; ctx.fillRect(0, 0, W, H / 2);
-    ctx.fillStyle = "#2c2c30"; ctx.fillRect(0, H / 2, W, H / 2);
+    // The world layer shakes with trauma; the UI layer (weapon, crosshair, HUD) stays steady.
+    const sh = shakeOffset(Math.min(1, trauma), MAX_SHAKE_PX);
+    const ov = MAX_SHAKE_PX + 2;                  // overscan so a shake never bares an edge
+    ctx.save();
+    ctx.translate(sh.x, sh.y);
 
-    // Wall columns.
+    ctx.fillStyle = skyGrad; ctx.fillRect(-ov, -ov, W + 2 * ov, H / 2 + ov);     // ceiling
+    ctx.fillStyle = floorGrad; ctx.fillRect(-ov, H / 2, W + 2 * ov, H / 2 + ov); // floor
+
+    // Torch flicker: a subtle global light wobble applied to the wall shading.
+    const flicker = 0.85 + 0.1 * (0.5 + 0.5 * Math.sin(nowMs * 0.012)) + (Math.random() - 0.5) * 0.05;
+
     for (let x = 0; x < W; x++) {
       const cameraX = (2 * x) / W - 1;
-      const rayDirX = dirX + planeX * cameraX;
-      const rayDirY = dirY + planeY * cameraX;
-
-      const hit = castRay(MAP, posX, posY, rayDirX, rayDirY);
+      const rdx = dirX + planeX * cameraX, rdy = dirY + planeY * cameraX;
+      const hit = castRay(dynMap, player.x, player.y, rdx, rdy);
       const dist = Math.max(hit.perpWallDist, 0.0001);
+      zbuffer[x] = dist;
 
-      const lineHeight = Math.floor(H / dist);
-      let drawStart = Math.floor(-lineHeight / 2 + H / 2);
+      const lineHeight = H / dist;
+      const sliceTop = -lineHeight / 2 + H / 2;      // unclamped top, for texture coords
+      let drawStart = Math.floor(sliceTop);
       let drawEnd = Math.floor(lineHeight / 2 + H / 2);
       if (drawStart < 0) drawStart = 0;
       if (drawEnd > H) drawEnd = H;
 
+      // Fractional hit position along the wall face (0..1) → horizontal texture coord.
+      let wallX = hit.side === 0 ? player.y + dist * rdy : player.x + dist * rdx;
+      wallX -= Math.floor(wallX);
+
+      // Per-cell tint (so adjacent bricks differ) + a vertical mortar groove.
+      const cellHash = ((hit.mapX * 73856093) ^ (hit.mapY * 19349663)) >>> 0;
+      const tint = 0.85 + (cellHash & 255) / 255 * 0.3;
+      const vmortar = wallX % 0.5 < 0.045 ? 0.6 : 1;
+      const fog = Math.min(1, Math.pow(dist / MAX_VIEW, 1.3));
+      const light = (hit.side === 1 ? 0.7 : 1) * flicker * tint * vmortar;
+
       const base = WALL_COLORS[hit.wall] || WALL_COLORS[1];
-      const sideMul = hit.side === 1 ? 0.65 : 1;          // fake directional light
-      const fog = Math.max(0.15, 1 - dist / MAX_VIEW);     // darken with distance
-      const k = sideMul * fog;
-      ctx.fillStyle =
-        "rgb(" + ((base[0] * k) | 0) + "," + ((base[1] * k) | 0) + "," + ((base[2] * k) | 0) + ")";
+      // Fade the lit colour toward the sickly fog tone with distance (not toward black).
+      ctx.fillStyle = rgb(
+        base[0] * light * (1 - fog) + FOG[0] * fog,
+        base[1] * light * (1 - fog) + FOG[1] * fog,
+        base[2] * light * (1 - fog) + FOG[2] * fog);
       ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+
+      // Brick courses + a band of ground ambient occlusion (only when the slice is tall).
+      if (drawEnd - drawStart > 6) {
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        for (let c = 1; c < 4; c++) {
+          const my = Math.floor(sliceTop + (c / 4) * lineHeight);
+          if (my > drawStart && my < drawEnd) ctx.fillRect(x, my, 1, 1);
+        }
+        const aoH = Math.max(1, (drawEnd - drawStart) * 0.06);
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(x, drawEnd - aoH, 1, aoH);
+      }
     }
 
+    drawDecals();
+    drawBoards();
+    drawCorpses();
+    drawPowerUps();
+    drawZombies();
+    drawParticles();
+    ctx.restore();                 // end the world-shake layer; UI below is steady
+
+    if (nukeFlash > 0) {           // Nuke detonation washes the screen white, then clears
+      ctx.fillStyle = "rgba(255,255,255," + Math.min(0.8, nukeFlash * 0.8).toFixed(3) + ")";
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);   // darken the screen edges
+    drawWeapon();
+    if (nowMs - player.lastDamageMs < 350) drawHurt();
+    drawEdgeHint();
+    drawPopups();
+    drawCrosshair();
     drawMinimap();
   }
 
-  function drawMinimap() {
-    const s = 5, ox = W - MAP_W * s - 4, oy = 4;
-    ctx.globalAlpha = 0.8;
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
-        ctx.fillStyle = MAP[y][x] ? "#566" : "#111";
-        ctx.fillRect(ox + x * s, oy + y * s, s - 1, s - 1);
+  // Billboard zombies as a hunched humanoid silhouette (head, shoulders, dangling arms,
+  // legs), depth-clipped per column. White flash on a fresh hit; a slow lurching sway.
+  function drawZombies() {
+    for (const p of projectSprites(player, FOV, W, H, zombies)) {
+      const z = p.sprite;
+      const top = p.drawStartY, h = p.drawEndY - p.drawStartY;
+      const fullW = p.scale * 0.5;
+      const left = Math.floor(p.screenX - fullW / 2);
+      const right = Math.ceil(p.screenX + fullW / 2);
+      const span = right - left;
+      const sway = Math.sin(nowMs * 0.005 + z.id * 1.7) * 0.06;   // lurch in u-space
+      const fog = Math.max(0.25, 1 - p.depth / MAX_VIEW);
+      const flash = nowMs - (hitFlash[z.id] || -1e9) < 110;
+      const body = flash ? [235, 238, 235] : [66, 92, 60];        // rotting greens, or
+      const limb = flash ? [220, 224, 220] : [52, 70, 48];        // near-white on a hit
+      const head = flash ? [240, 240, 235] : [120, 118, 96];
+
+      for (let x = left; x < right; x++) {
+        if (x < 0 || x >= W || p.depth >= zbuffer[x]) continue;   // wall occludes
+        const u = (span <= 1 ? 0.5 : (x - left) / span) - sway;
+        if ((u > 0.34 && u < 0.46) || (u > 0.54 && u < 0.66)) {   // legs
+          const s = fog * 0.8;
+          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
+          ctx.fillRect(x, top + h * 0.62, 1, h * 0.38);
+        }
+        if ((u > 0.16 && u < 0.30) || (u > 0.70 && u < 0.84)) {   // dangling arms
+          const s = fog * 0.85;
+          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
+          ctx.fillRect(x, top + h * 0.26, 1, h * 0.34);
+        }
+        if (u > 0.30 && u < 0.70) {                               // hunched torso
+          const s = (0.7 + 0.3 * (1 - Math.abs(u - 0.5) * 2)) * fog;
+          ctx.fillStyle = rgb(body[0] * s, body[1] * s, body[2] * s);
+          ctx.fillRect(x, top + h * 0.22, 1, h * 0.42);
+        }
+        if (u > 0.40 && u < 0.60) {                               // head
+          ctx.fillStyle = rgb(head[0] * fog, head[1] * fog, head[2] * fog);
+          ctx.fillRect(x, top + h * 0.04, 1, h * 0.20);
+        }
+      }
+      // Glowing eyes, locked to the head's swaying centre so they never slide off the face.
+      const cxi = Math.floor(p.screenX);
+      if (!flash && h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
+        const hc = p.screenX + sway * span;          // head centre tracks the same lurch
+        const sep = Math.max(1, fullW * 0.07);       // half the gap between the two eyes
+        const ew = Math.max(1, fullW * 0.05), eh = Math.max(1, h * 0.03);
+        const ey = top + h * 0.12;                   // drop them onto the eye line
+        ctx.fillStyle = "rgba(255,70,45,0.30)";      // dim halo for a sickly glow
+        ctx.fillRect(hc - sep - ew, ey - eh, ew * 2, eh * 3);
+        ctx.fillRect(hc + sep - ew, ey - eh, ew * 2, eh * 3);
+        ctx.fillStyle = "#ff3024";                   // hot pupils, mirrored about the centre
+        ctx.fillRect(hc - sep - ew, ey, ew, eh);
+        ctx.fillRect(hc + sep, ey, ew, eh);
       }
     }
-    ctx.fillStyle = "#ff5";
-    ctx.fillRect(ox + posX * s - 1, oy + posY * s - 1, 2, 2);
-    ctx.strokeStyle = "#ff5";
+  }
+
+  // Persistent marks from src/decals.js: bullet holes pinned to walls + blood pools on the
+  // floor. decals.js owns the list lifetime + projection math; this only paints each mark and
+  // depth-clips it against the wall buffer so a mark behind a nearer wall stays hidden.
+  function drawDecals() {
+    for (const d of decals) {
+      const fade = d.fade ?? 1;
+      if (fade <= 0) continue;
+      if (d.kind === "blood") {
+        const pr = projectFloorDecal(player, FOV, W, H, d);
+        if (!pr.visible) continue;
+        const fog = Math.max(0.2, 1 - pr.depth / MAX_VIEW);
+        const rx = Math.min(80, Math.max(2, pr.scale * 0.12));
+        const ry = Math.max(1, rx * 0.42);                          // flattened by floor perspective
+        const a = (0.5 * fade * fog).toFixed(3);
+        ctx.fillStyle = "rgba(86,12,12," + a + ")";
+        for (let x = Math.floor(pr.screenX - rx); x < Math.ceil(pr.screenX + rx); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x]) continue;   // a nearer wall hides the floor
+          const dy = ry * Math.sqrt(Math.max(0, 1 - ((x - pr.screenX) / rx) ** 2));
+          ctx.fillRect(x, pr.screenY - dy, 1, dy * 2);
+        }
+      } else {
+        const pr = projectWallDecal(player, FOV, W, H, d);
+        if (!pr.visible) continue;
+        const fog = Math.max(0.2, 1 - pr.depth / MAX_VIEW);
+        const r = Math.min(28, Math.max(1.5, pr.scale * 0.04));
+        const a = (0.55 * fade * fog).toFixed(3);
+        ctx.fillStyle = "rgba(16,12,10," + a + ")";
+        for (let x = Math.floor(pr.screenX - r); x < Math.ceil(pr.screenX + r); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x] + 0.12) continue;  // only on its own (or a nearer) wall
+          const dy = r * Math.sqrt(Math.max(0, 1 - ((x - pr.screenX) / r) ** 2));
+          ctx.fillRect(x, pr.screenY - dy, 1, dy * 2);
+        }
+      }
+    }
+  }
+
+  // Boarded windows: paint the planks still nailed across each window so a breached
+  // barricade visibly loses slats. We project the room-facing wall surface (mirroring the
+  // bullet-hole math) and depth-clip against the wall buffer so boards behind a nearer
+  // wall stay hidden.
+  function drawBoards() {
+    for (const win of LEVEL.windows) {
+      const n = world.windows[win.id] ?? 0;
+      if (n <= 0) continue;                                       // fully torn open — nothing to draw
+      const fx = win.cx + 0.5 + win.faceX * 0.5;                  // the surface the player actually sees
+      const fy = win.cy + 0.5 + win.faceY * 0.5;
+      const pr = projectWallDecal(player, FOV, W, H, { x: fx, y: fy });
+      if (!pr.visible) continue;
+      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+      const halfW = Math.min(40, Math.max(3, pr.scale * 0.18));   // plank span tracks apparent wall size
+      const plankH = Math.max(1, pr.scale * 0.035);
+      const spread = pr.scale * 0.34;                             // vertical band the planks fill
+      for (let b = 0; b < n; b++) {
+        const py = pr.screenY - spread / 2 + (b + 0.5) * (spread / MAX_BOARDS);
+        const tone = b % 2 ? 96 : 120;                            // alternate slat shading for depth
+        ctx.fillStyle = "rgba(" + ((tone * fog) | 0) + "," + ((tone * 0.64 * fog) | 0) + "," +
+                        ((tone * 0.38 * fog) | 0) + ",0.92)";
+        for (let x = Math.floor(pr.screenX - halfW); x < Math.ceil(pr.screenX + halfW); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x] + 0.12) continue;   // hide behind nearer walls
+          ctx.fillRect(x, py - plankH / 2, 1, plankH);
+        }
+      }
+    }
+  }
+
+  // Slain zombies leave a dark mound that collapses to the floor and fades over CORPSE_MS.
+  function drawCorpses() {
+    for (const c of corpses) {
+      const life = (nowMs - c.bornMs) / CORPSE_MS;
+      if (life >= 1) continue;
+      const pr = projectSprite(player, FOV, W, H, c);
+      if (!pr.visible) continue;
+      const h = pr.drawEndY - pr.drawStartY;
+      const fullW = pr.scale * 0.5;
+      const left = Math.floor(pr.screenX - fullW / 2);
+      const right = Math.ceil(pr.screenX + fullW / 2);
+      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+      const a = (1 - life) * fog;
+      const top = pr.drawStartY + h * (0.55 + 0.4 * life);        // sinks as it fades
+      ctx.fillStyle = "rgba(" + ((58 * fog) | 0) + "," + ((26 * fog) | 0) + "," +
+        ((26 * fog) | 0) + "," + a.toFixed(3) + ")";
+      for (let x = left; x < right; x++) {
+        if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+        ctx.fillRect(x, top, 1, pr.drawEndY - top);
+      }
+    }
+  }
+
+  // Floating, glowing power-up drops — powerups.js owns the type + lifetime; this only paints
+  // a hovering diamond (colour per type), depth-clipped, blinking as the drop nears expiry.
+  function drawPowerUps() {
+    const COLORS = {
+      nuke: [235, 238, 248], maxAmmo: [255, 210, 70],
+      instaKill: [232, 72, 60], doublePoints: [110, 222, 132],
+    };
+    for (const d of powerUps) {
+      const pr = projectSprite(player, FOV, W, H, d);
+      if (!pr.visible) continue;
+      const h = pr.drawEndY - pr.drawStartY;
+      const fullW = pr.scale * 0.5;
+      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+      const blink = d.ttl < 3 ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(nowMs * 0.02)) : 1;
+      const size = Math.max(2, fullW * 0.5 * (0.8 + 0.2 * Math.sin(nowMs * 0.006)));
+      const cx = pr.screenX;
+      const cy = pr.drawStartY + h * 0.62 + Math.sin(nowMs * 0.004 + d.x * 2) * h * 0.04;
+      const [r, g, b] = COLORS[d.type] || [255, 255, 255];
+      const a = (fog * blink).toFixed(3);
+      for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
+        if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+        ctx.fillStyle = "rgba(" + ((r * 0.9) | 0) + "," + ((g * 0.9) | 0) + "," +
+          ((b * 0.9) | 0) + ",0.22)";
+        ctx.fillRect(x, cy - size, 1, size * 2);                  // soft halo column
+        const hh = size * (1 - Math.abs(x - cx) / size);         // diamond core tapers to the edges
+        ctx.fillStyle = "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + "," + a + ")";
+        ctx.fillRect(x, cy - hh, 1, hh * 2);
+      }
+    }
+  }
+
+  function drawWeapon() {
+    const gunW = W * 0.22, gunH = H * 0.18;
+    const kick = recoil * 6;                              // recoil drops the gun down/back
+    const bobX = Math.cos(bobPhase) * (moving ? 2.5 : 0.6);
+    const bobY = Math.abs(Math.sin(bobPhase)) * (moving ? 3 : 0.8);
+    const gx = W / 2 + (cursorX - W / 2) * 0.5 + bobX;   // leans toward the cursor + sways
+    const gy = H - gunH + kick + bobY;
+
+    // Muzzle flash briefly floods the lower scene with warm light.
+    if (muzzleFlash > 0) {
+      ctx.fillStyle = "rgba(255,230,150," + ((muzzleFlash / 0.05) * 0.22).toFixed(3) + ")";
+      ctx.fillRect(0, H * 0.5, W, H * 0.5);
+    }
+    ctx.fillStyle = "#15151b";
+    ctx.fillRect(gx - gunW * 0.22, gy + gunH * 0.10, gunW * 0.44, gunH);   // grip / body
+    ctx.fillStyle = "#23232e";
+    ctx.fillRect(gx - gunW * 0.10, gy - gunH * 0.05, gunW * 0.20, gunH * 0.5); // slide
+    ctx.fillStyle = "#0e0e14";
+    ctx.fillRect(gx - 2.5, gy - gunH * 0.32, 5, gunH * 0.42);              // barrel
+    if (muzzleFlash > 0) {
+      const r = 5 + recoil * 6, fy = gy - gunH * 0.34;
+      const g = ctx.createRadialGradient(gx, fy, 0, gx, fy, r);
+      g.addColorStop(0, "rgba(255,250,210,0.95)");
+      g.addColorStop(1, "rgba(255,170,60,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(gx, fy, r, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function drawHurt() {
+    const a = 0.5 * (1 - (nowMs - player.lastDamageMs) / 350);
+    ctx.fillStyle = "rgba(190,20,20," + a.toFixed(3) + ")";
+    ctx.fillRect(0, 0, W, 6); ctx.fillRect(0, H - 6, W, 6);
+    ctx.fillRect(0, 0, 6, H); ctx.fillRect(W - 6, 0, 6, H);
+  }
+
+  function drawCrosshair() {
+    const cx = cursorX, cy = cursorY;
+    const spread = 2 + recoil * 5 + (moving ? 1.5 : 0);   // gap blooms when firing/moving
+    ctx.strokeStyle = "rgba(230,235,245,0.9)";
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(ox + posX * s, oy + posY * s);
-    ctx.lineTo(ox + (posX + Math.cos(angle) * 1.5) * s, oy + (posY + Math.sin(angle) * 1.5) * s);
+    ctx.moveTo(cx - spread - 3, cy); ctx.lineTo(cx - spread, cy);
+    ctx.moveTo(cx + spread, cy); ctx.lineTo(cx + spread + 3, cy);
+    ctx.moveTo(cx, cy - spread - 3); ctx.lineTo(cx, cy - spread);
+    ctx.moveTo(cx, cy + spread); ctx.lineTo(cx, cy + spread + 3);
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(230,235,245,0.9)";
+    ctx.fillRect(cx, cy, 1, 1);               // centre dot
+    if (hitMarker > 0) {                      // brief X when a shot connects
+      ctx.strokeStyle = headshotFlash > 0     // gold for headshots, red for body hits
+        ? "rgba(255,210,70,0.97)"
+        : "rgba(255,80,80,0.95)";
+      ctx.beginPath();
+      ctx.moveTo(cx - 7, cy - 7); ctx.lineTo(cx - 3, cy - 3);
+      ctx.moveTo(cx + 7, cy - 7); ctx.lineTo(cx + 3, cy - 3);
+      ctx.moveTo(cx - 7, cy + 7); ctx.lineTo(cx - 3, cy + 3);
+      ctx.moveTo(cx + 7, cy + 7); ctx.lineTo(cx + 3, cy + 3);
+      ctx.stroke();
+    }
+    if (headshotFlash > 0) {                   // gold "HEADSHOT" cue floating above the reticle
+      const a = Math.min(1, headshotFlash / 0.6);
+      ctx.font = "bold 10px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,210,70," + a.toFixed(3) + ")";
+      ctx.fillText("HEADSHOT", cx, cy - 16);
+      ctx.textAlign = "left";
+    }
+    if (buyMsgT > 0) {                          // brief gold confirmation under the reticle
+      const a = Math.min(1, buyMsgT / 1.4);
+      ctx.font = "bold 13px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,213,74," + a.toFixed(3) + ")";
+      ctx.fillText(buyMsg, cx, cy + 34);
+      ctx.textAlign = "left";
+    }
   }
 
-  let last = performance.now(), frames = 0, fps = 0, acc = 0;
-  function loop(now) {
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
-    update(dt);
+  // Faint bar on whichever edge the cursor is steering into, so turning reads clearly.
+  function drawEdgeHint() {
+    const lz = EDGE * W, rz = (1 - EDGE) * W;
+    if (cursorX < lz) {
+      ctx.fillStyle = "rgba(150,180,255," + (0.10 + 0.22 * (1 - cursorX / lz)).toFixed(3) + ")";
+      ctx.fillRect(0, 0, 3, H);
+    } else if (cursorX > rz) {
+      ctx.fillStyle = "rgba(150,180,255," + (0.10 + 0.22 * ((cursorX - rz) / (W - rz))).toFixed(3) + ")";
+      ctx.fillRect(W - 3, 0, 3, H);
+    }
+  }
+
+  // CoD-style radar: a player-centred circular minimap. North is up (the compass
+  // letters are fixed); the yellow triangle and FOV cone show where you're looking.
+  function drawMinimap() {
+    const R = 30, cx = W - R - 6, cy = R + 6;     // radar centre, tucked top-right
+    const s = 4;                                  // pixels per map cell
+    const half = Math.atan(FOV);                  // FOV half-angle for the look cone
+
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.closePath();
+    ctx.fillStyle = "rgba(6,11,8,0.82)"; ctx.fill();
+    ctx.clip();                                   // everything below is masked to the dish
+
+    // Look cone — a faint wedge in the direction you face.
+    ctx.fillStyle = "rgba(255,225,120,0.10)";
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, R, player.angle - half, player.angle + half); ctx.closePath(); ctx.fill();
+
+    // Walls, drawn relative to the player so the dish scrolls under a fixed centre.
+    ctx.fillStyle = "#3a5547";
+    for (let y = 0; y < LEVEL.H; y++)
+      for (let x = 0; x < LEVEL.W; x++) {
+        if (!dynMap[y][x]) continue;
+        ctx.fillRect(cx + (x + 0.5 - player.x) * s - s / 2,
+                     cy + (y + 0.5 - player.y) * s - s / 2, s, s);
+      }
+
+    // Zombie blips.
+    ctx.fillStyle = "#ff4040";
+    for (const z of zombies) {
+      const bx = cx + (z.x - player.x) * s, by = cy + (z.y - player.y) * s;
+      ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+    }
+
+    // Buyable markers: wall guns, the Box, Perk-a-Colas, and the debris door.
+    // markers.js decides which to show (owned perks + opened doors drop out); we
+    // just project their world cells onto the dish and stamp a coloured diamond so
+    // buyables read apart from the square wall cells.
+    const MARKER_COLORS = { mount: "#5ad6ff", box: "#ffd23a", perk: "#54e06a", door: "#ff8a3a" };
+    for (const m of buyableMarkers(LEVEL, world, player)) {
+      const mx = cx + (m.x - player.x) * s, my = cy + (m.y - player.y) * s;
+      ctx.fillStyle = MARKER_COLORS[m.kind] || "#ffffff";
+      ctx.beginPath();
+      ctx.moveTo(mx, my - 2.4); ctx.lineTo(mx + 2.4, my);
+      ctx.lineTo(mx, my + 2.4); ctx.lineTo(mx - 2.4, my);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();                                // drop the clip for the overlay chrome
+
+    // Player facing triangle at the centre (angle 0 = +x = East = screen-right).
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(player.angle);
+    ctx.fillStyle = "#ffe14a";
+    ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // Bezel + cardinal compass (north-up, so the letters stay put).
+    ctx.strokeStyle = "rgba(180,200,190,0.55)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.font = "bold 7px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#ffec6a"; ctx.fillText("N", cx, cy - R + 6);
+    ctx.fillStyle = "rgba(220,230,225,0.85)";
+    ctx.fillText("S", cx, cy + R - 6);
+    ctx.fillText("E", cx + R - 5, cy);
+    ctx.fillText("W", cx - R + 5, cy);
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+
+  // Blood puffs (red) and wall sparks (gold): world-space points, depth-clipped against
+  // the wall buffer like the zombie billboards, drawn as little fading squares.
+  function drawParticles() {
+    for (const list of [blood, sparks]) {
+      const red = list === blood;
+      for (const pt of list) {
+        const pr = projectSprite(player, FOV, W, H, pt);
+        if (!pr.visible) continue;
+        const col = Math.floor(pr.screenX);
+        if (col < 0 || col >= W || pr.depth >= zbuffer[col]) continue;   // wall occludes
+        const life = Math.max(0, 1 - pt.age / pt.ttl);
+        const cy = (pr.drawStartY + pr.drawEndY) / 2;
+        const sz = Math.max(1, pr.scale * 0.03);
+        ctx.fillStyle = red
+          ? "rgba(180,30,30," + life.toFixed(3) + ")"
+          : "rgba(255,210,120," + life.toFixed(3) + ")";
+        ctx.fillRect(pr.screenX - sz / 2, cy - sz / 2, sz, sz);
+      }
+    }
+  }
+
+  // Floating "+N" score numbers (screen-space; they detach at the hit and rise as they fade).
+  function drawPopups() {
+    ctx.font = "bold 9px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    for (const p of popups) {
+      const a = Math.max(0, 1 - p.age / p.ttl);
+      ctx.fillStyle = "rgba(255,213,74," + a.toFixed(3) + ")";
+      ctx.fillText("+" + p.value, p.x, p.y);
+    }
+    ctx.textAlign = "left";
+  }
+
+  // ---- HUD + fixed-timestep loop ----
+  let last = performance.now(), acc = 0;
+  const STEP = 1 / 60;
+
+  function updateHud() {
+    const a = player.ammo[player.weapon];
+    const w = WEAPONS[player.weapon];
+    const reloading = player.reloadTimer !== undefined;
+    // Round readout: count during a round, countdown to the next during intermission.
+    roundEl.innerHTML = spawnState.phase === "intermission"
+      ? "ROUND <b>" + spawnState.round + "</b> — NEXT IN " +
+        Math.max(0, Math.ceil(spawnState.roundTimer || 0)) + "S"
+      : "ROUND <b>" + spawnState.round + "</b>";
+    if (player.points !== lastPoints) {                 // pop the score when it changes
+      pointsEl.textContent = player.points;
+      pointsEl.classList.remove("pop"); void pointsEl.offsetWidth; pointsEl.classList.add("pop");
+      lastPoints = player.points;
+    }
+    magEl.textContent = reloading ? "··" : a.mag;
+    reserveEl.textContent = "/ " + a.reserve;
+    weaponEl.textContent = w.name + (reloading ? " — RELOADING" : a.mag === 0 ? " — RELOAD (R)" : "");
+    ammoEl.classList.toggle("empty", a.mag === 0 && !reloading);
+    // Classic Nacht has no health bar — the screen edges bleed when you're low.
+    lowhpEl.classList.toggle("show", player.hp > 0 && player.hp / player.maxHp < 0.34);
+    // Buy prompt: interact.findInteractable surfaces the nearest in-reach buyable; grey it
+    // out (CSS .poor) when the player can't afford it yet so intent stays readable.
+    if (buyTarget) {
+      buypromptEl.textContent = "Press F — " + buyLabel(buyTarget) + "  [" + buyTarget.cost + "]";
+      buypromptEl.classList.add("show");
+      buypromptEl.classList.toggle("poor", player.points < buyTarget.cost);
+    } else {
+      buypromptEl.classList.remove("show", "poor");
+    }
+    // Active timed power-ups tick down under the round line (Insta-Kill / Double Points).
+    const active = Object.entries(activePowerUps)
+      .filter(([, secs]) => secs > 0)
+      .map(([type, secs]) => POWERUP_LABELS[type] + " " + Math.ceil(secs) + "S")
+      .join("   ");
+    powerupsEl.textContent = active;
+    powerupsEl.classList.toggle("show", active.length > 0);
+  }
+
+  function frame(t) {
+    let dt = (t - last) / 1000; last = t;
+    if (dt > 0.25) dt = 0.25;        // clamp after a tab-switch to avoid a spiral
+    acc += dt;
+    while (acc >= STEP) { if (!gameOver) simulate(STEP); acc -= STEP; }
     render();
-
-    frames++; acc += dt;
-    if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
-    hud.textContent =
-      "fps " + fps + "  ·  x " + posX.toFixed(2) + "  y " + posY.toFixed(2) +
-      "  ·  " + ((angle * 180 / Math.PI) % 360 | 0) + "°";
-
-    requestAnimationFrame(loop);
+    updateHud();
+    requestAnimationFrame(frame);
   }
-  requestAnimationFrame(loop);
+  requestAnimationFrame(frame);
   </script>
 </body>
 </html>

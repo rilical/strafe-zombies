@@ -23,7 +23,8 @@ npm run serve        # python3 -m http.server 8731
 # then visit http://localhost:8731/index.html
 ```
 
-**Controls:** `W`/`S` move · `A`/`D` turn · `Q`/`E` strafe (arrow keys also work).
+**Controls:** `W`/`A`/`S`/`D` move · mouse aims the gun · screen edges turn · click / hold to
+shoot · `R` reload · `F` buy (wall guns, perks, the Mystery Box, and debris doors).
 
 ## Develop it
 
@@ -68,7 +69,7 @@ Every change follows the same loop. It is documented in
 | Path | What it is |
 |---|---|
 | `src/engine.js` | Pure raycasting (DDA) + collision. The testable core. No DOM. |
-| `src/game.js` | Pure gameplay logic (e.g. zombie chase AI). No DOM. |
+| `src/*.js` | Pure game systems — `level`, `barriers`, `rounds`, `pathfind`, `shooting`, `survival`, `economy`, `weapons`, `sprites`, … Unit-tested, no DOM. |
 | `index.html` | The playable renderer: camera, wall slices, fog, minimap, HUD, input. |
 | `test/` | `vitest` unit tests for the pure logic. |
 | `docs/` | PRD, architecture, the working agreement, and `plans/` (one file per plan). |
@@ -80,12 +81,21 @@ The zombies game is built feature by feature, **plan by plan** — each step is 
 self-contained, heavily-documented pull request. We are **PR-driven**: there is no issue
 tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress so far:
 
-- [x] Zombie chase AI (`stepZombie`, pure + tested)
-- [ ] Sprite rendering (billboarded zombies) with correct depth vs. walls
-- [ ] Wave spawner
-- [ ] Player health & damage on contact
-- [ ] Shooting (hitscan) and zombie death
-- [ ] Score, waves, and a game-over/restart loop
+- [x] Zombie navigation (flow-field, `pathfind.js`, pure + tested — supersedes `stepZombie`)
+- [x] Sprite rendering (billboarded zombies) with correct depth vs. walls
+- [x] Wave spawner (faithful round escalation, `rounds.js` + window spawns)
+- [x] Player health & damage on contact
+- [x] Shooting (hitscan) and zombie death
+- [x] Score, waves, and a game-over/restart loop
+- [x] The Nacht-style 4-room map (`level.js`) with debris doors + boarded windows (`barriers.js`)
+- [x] Buying: wall-buy guns, the Mystery Box, and Perk-a-Colas (`economy`/`weapons`/`perks`/`interact`)
+- [x] Perk effects — Juggernog (health), Speed Cola (reload), Double Tap (fire rate)
+- [x] Power-ups — Nuke / Max Ammo / Insta-Kill / Double Points drops (`powerups.js`)
+- [x] Headshots, screen-shake, score popups, blood/spark particles
+- [x] Persistent decals — bullet holes on walls + blood pools on the floor (`decals.js`)
+- [x] Fully procedural sound — synthesised live in WebAudio, no audio files (`sfx.js`)
+- [x] Boarded-window siege — zombies tear the planks off and climb in; press `F` to re-board for points (`barricades.js`)
+- [x] Minimap buyables — wall-guns, the box, perks, and doors flagged on the radar (`markers.js`)
 
 ## License
 

@@ -14,47 +14,66 @@ into clean, independently shippable features.
 
 ## Core mechanic
 
-**Strafing to survive.** Zombies are slow but numerous and walk straight at the player.
-The player wins by circle-strafing (`Q`/`E`) to maintain spacing and line up shots,
-rather than running in straight lines. Every feature should make that loop feel better.
+**Survive escalating rounds — Nacht der Untoten style.** You spawn in a sealed building and
+**buy wall guns and open debris doors with points**, then **circle-strafe to train the
+horde** into a line and shoot. Zombies are slow at first but grow faster, tougher, and more
+numerous every round; the loop is *survive a round → earn points → buy an upgrade → survive
+the harder round*. Aiming is **mouse-look**, movement is **WASD** (A/D strafe). Every feature
+should make that buy-train-shoot loop feel better.
+
+The full v1 design and PR-by-PR build order live in
+[`docs/plans/0002-zombies-survival.md`](plans/0002-zombies-survival.md).
 
 ## Core features (in deployment order)
 
-This order is the source of truth for sequencing — we are PR-driven, with no issue
-tracker, so this list *is* the roadmap. Each item is one (sometimes two) small,
-documented PR(s), test-first where it touches `src/`.
+This is the high-level arc; the authoritative PR-by-PR sequence (15 steps) lives in
+[`0002-zombies-survival.md`](plans/0002-zombies-survival.md). We are PR-driven with no issue
+tracker, so that plan *is* the roadmap. Each step is a small, documented PR, test-first where
+it touches `src/`.
 
 1. **Baseplate** *(done)* — raycaster engine, renderer, collision, minimap, tests, CI.
-2. **Sprite rendering** — billboard a sprite in the world, depth-correct against walls
-   (per-column depth buffer). Pure projection math in `src/`, tested.
-3. **Zombie entity + chase AI** — `stepZombie()` moves a zombie toward the player using
-   existing collision. Pure, tested. *(Chase AI done; rendering zombies as sprites
-   depends on step 2.)*
-4. **Wave spawner** — spawn N zombies at map spawn points; pure spawn logic, tested.
-5. **Player health & damage** — contact damage with an i-frame cooldown; pure, tested.
-   HUD shows health.
-6. **Shooting (hitscan)** — fire along the view direction, hit the nearest zombie within
-   a cone/range; pure target-selection, tested. Zombie death + removal.
-7. **Game loop & score** — waves, score, game-over + restart. HUD shows wave/score.
+2. **Sprite rendering** — depth-correct billboards (per-column depth buffer). Pure, tested.
+3. **Zombie nav** — flow-field navigation toward the player (`pathfind.js`), drawn as a
+   sprite. Pure, tested. *(Supersedes the original straight-line `stepZombie`.)*
+4. **Shooting + game feel** — hitscan target selection, kills, and the juice bundle (screen
+   shake, hit marker, muzzle flash, points popups, gunshot SFX). Pure logic tested.
+5. **Health & game-over** — contact damage with per-zombie cooldown + regen; down ends the
+   run. Damage shows as a screen-edge vignette (no health bar).
+6. **Rounds** — faithful round/wave spawner state machine (count/HP/speed/cadence), round HUD.
+7. **Points economy** — earn on hit/kill, spend on guns/doors/Box; points HUD.
+8. **Map, windows & doors** — the faithful loop level, boarded windows zombies climb through,
+   buyable debris that opens the building.
+9. **Wall guns + Mystery Box** — wall-buys, ammo/reload, the 950 Box.
+10. **Power-ups** — Nuke / Max Ammo / Insta-Kill / Double Points drops.
+11. **Perks** — three buyable Perk-a-Colas: Juggernog (health), Speed Cola (reload), Double
+    Tap (fire rate). Pure stat multipliers; no downed/revive state.
+12. **Textured rendering + decals** — framebuffer, textured walls, floor casting, then
+    persistent bullet-hole and blood-pool decals. Capstone renderer work.
 
 ## Non-goals (explicitly out of scope)
 
 Listing these is how we kill scope creep:
 
-- **No WAD/Doom asset loading, BSP, or real Doom maps.** This is a raycaster, not a Doom
-  port.
+- **No asset files of any kind.** Textures, sprites, and sounds are all generated
+  procedurally in code — no WAD/Doom loading, no BSP, no image/audio files, no real Doom maps.
+- **No music engine.** SFX are synthesised live in WebAudio; at most an optional ambient
+  drone much later.
+- **No A\* pathfinding.** Zombie nav is a cheap **flow-field (Dijkstra)** over the grid —
+  enough for a horde converging on one player; revisit only if it visibly fails.
 - **No networking / multiplayer.**
-- **No audio engine** beyond, at most, a couple of one-shot SFX much later.
-- **No level editor or multiple levels** for the demo — one hand-authored map.
+- **No level editor or multiple levels** — one hand-authored map (the Nacht loop).
 - **No build tooling / framework / bundler.** Vanilla ES modules only.
 - **No mobile/touch controls** for the first version.
-- **No pathfinding (A*)** — straight-line chase with wall sliding is enough for the
-  strafe mechanic; revisit only if it visibly fails.
+- **No headshots, Pack-a-Punch, or shotgun penetration** in v1 — see the plan's deferred
+  list (headshots need vertical aim). **Perks are partly in:** the three stat Perk-a-Colas
+  (Juggernog / Speed Cola / Double Tap) ship; **Quick Revive and the downed/revive state do
+  not** — going down stays instant game-over.
 
 ## Success criteria
 
-- Loads instantly with no build step; runs the whole demo without a refresh.
-- The strafe-to-survive loop is legible within ~30 seconds of play.
+- Loads instantly with no build step; runs the whole game without a refresh.
+- Recognisably *Nacht der Untoten* within ~30 seconds — windows, wall-buys, the round howl,
+  the points loop.
 - Every gameplay feature landed as a small, test-backed, documented PR — the history
   reads as a clean sequence.
 - `npm test` green on every commit to `main`; CI enforces it.
