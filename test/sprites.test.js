@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { projectSprite, projectSprites } from "../src/sprites.js";
+import { MAP, castRay } from "../src/engine.js";
 
 // Camera conventions match src/engine.js:
 //   dir   = (cos angle, sin angle)
@@ -36,6 +37,30 @@ describe("projectSprite — depth is the forward (perpendicular) distance", () =
     const p = projectSprite(player(2, 2, 0), FOV, W, H, { x: 5, y: 4 });
     expect(p.depth).toBeCloseTo(3, 6);
     expect(p.depth).toBeLessThan(Math.hypot(3, 2)); // < euclidean √13 ≈ 3.606
+  });
+});
+
+describe("projectSprite — depth is comparable to castRay's perpWallDist", () => {
+  // The renderer occludes a sprite column where its depth >= the wall's
+  // perpWallDist in that column, so the two distances must be on the same
+  // scale. Cast straight at a wall from the engine's reference player and
+  // check a sprite sitting on the hit point reports the identical depth.
+  it("equals perpWallDist for a sprite on the wall along the view axis", () => {
+    const wall = castRay(MAP, 1.5, 1.5, 1, 0); // east ray → pillar at 7.5 (engine.test.js)
+    expect(wall.perpWallDist).toBeCloseTo(7.5, 6);
+    const onWall = projectSprite(player(1.5, 1.5, 0), FOV, W, H, {
+      x: 1.5 + wall.perpWallDist,
+      y: 1.5,
+    });
+    expect(onWall.depth).toBeCloseTo(wall.perpWallDist, 6);
+  });
+
+  it("reads farther than the wall when behind it, nearer when in front", () => {
+    const wall = castRay(MAP, 1.5, 1.5, 1, 0).perpWallDist;
+    const behindWall = projectSprite(player(1.5, 1.5, 0), FOV, W, H, { x: 1.5 + wall + 1, y: 1.5 });
+    const beforeWall = projectSprite(player(1.5, 1.5, 0), FOV, W, H, { x: 1.5 + wall - 1, y: 1.5 });
+    expect(behindWall.depth).toBeGreaterThan(wall); // occluded by the wall buffer
+    expect(beforeWall.depth).toBeLessThan(wall);    // drawn over the wall
   });
 });
 
@@ -115,11 +140,13 @@ describe("projectSprites — culls and z-sorts", () => {
 
   it("orders results far → near (painter's algorithm)", () => {
     const out = projectSprites(p, FOV, W, H, [A, B, C, behind]);
-    expect(out.map((s) => s.depth)).toEqual([
-      ...out.map((s) => s.depth),
-    ].sort((a, b) => b - a));
-    expect(out.map((s) => s.depth)[0]).toBeCloseTo(6, 6); // B first (farthest)
-    expect(out.map((s) => s.depth)[2]).toBeCloseTo(2, 6); // A last (nearest)
+    // Explicit far → near depths: B(6) → C(4) → A(2); nearest is drawn last.
+    expect(out[0].depth).toBeCloseTo(6, 6);
+    expect(out[1].depth).toBeCloseTo(4, 6);
+    expect(out[2].depth).toBeCloseTo(2, 6);
+    // Strictly decreasing — a near→far regression fails here instead of slipping by.
+    expect(out[0].depth).toBeGreaterThan(out[1].depth);
+    expect(out[1].depth).toBeGreaterThan(out[2].depth);
   });
 
   it("attaches each source sprite so the renderer can map projections back", () => {
