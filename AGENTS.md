@@ -10,9 +10,11 @@ see [`docs/working-agreement.md`](docs/working-agreement.md) — these are the s
    before claiming anything works.
 2. **Small, frequent PRs.** One concern per branch/PR. Keep diffs small. If a change is
    growing past a few hundred lines, split it. Do not bundle unrelated work.
-3. **Docs in the same PR.** Update affected docs (`README.md`, `docs/*`) within the PR
-   that changes the behavior. Write a PR description with **what** and **why**, linking
-   the issue it closes.
+3. **PR-driven, plan by plan, doc-heavy.** There is no issue tracker. Start each change
+   from a short written plan (in the PR description, or a note in `docs/plans/` for larger
+   work), then land one small PR. Update affected docs (`README.md`, `docs/*`) in the same
+   PR, write a self-contained **what**/**why** description, and comment the code for a
+   reader. No issue numbers — the PR stands on its own.
 4. **Seam edits, not rewrites.** Change the minimal region of a file. NEVER regenerate or
    rewrite an entire file to make a small change — use targeted edits that preserve
    surrounding code and produce a clean, readable diff.
@@ -29,19 +31,21 @@ see [`docs/working-agreement.md`](docs/working-agreement.md) — these are the s
 
 ```
 git checkout -b feat/<short-name>
+# 0. write the short plan (in the PR description, or docs/plans/ for bigger work)
 # 1. add a failing test in test/
 # 2. implement the minimal code in src/
 npm test                      # must be green
 # 3. wire it into index.html if it's player-visible
-# 4. update docs touched by the change
+# 4. update docs touched by the change + comment the code for a reader
 git commit -m "feat: <what> (why)"
-# open a PR; let CI + review run; merge small
+# open a self-contained PR (plan + what/why in the description); CI runs; merge small
 ```
 
 ## Definition of done
 
-`npm test` green · diff small and single-purpose · docs updated in the same PR · PR
-description explains what/why and links its issue · CI passing.
+`npm test` green · diff small and single-purpose · docs updated in the same PR · code
+commented for a reader · PR opens with its plan and explains what/why (self-contained, no
+issue refs) · CI passing.
 
 ## Style
 

@@ -20,14 +20,16 @@ rather than running in straight lines. Every feature should make that loop feel 
 
 ## Core features (in deployment order)
 
-This order is the source of truth for sequencing. Each item is one (sometimes two)
-small PR(s), each test-first where it touches `src/`.
+This order is the source of truth for sequencing — we are PR-driven, with no issue
+tracker, so this list *is* the roadmap. Each item is one (sometimes two) small,
+documented PR(s), test-first where it touches `src/`.
 
 1. **Baseplate** *(done)* — raycaster engine, renderer, collision, minimap, tests, CI.
 2. **Sprite rendering** — billboard a sprite in the world, depth-correct against walls
    (per-column depth buffer). Pure projection math in `src/`, tested.
 3. **Zombie entity + chase AI** — `stepZombie()` moves a zombie toward the player using
-   existing collision. Pure, tested. Render zombies as sprites.
+   existing collision. Pure, tested. *(Chase AI done; rendering zombies as sprites
+   depends on step 2.)*
 4. **Wave spawner** — spawn N zombies at map spawn points; pure spawn logic, tested.
 5. **Player health & damage** — contact damage with an i-frame cooldown; pure, tested.
    HUD shows health.
