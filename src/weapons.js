@@ -60,9 +60,11 @@ function fullAmmoFor(id) {
 
 // Attempts one shot from a composed weapon-state object `{id, mag, reserve, ...}`.
 // `player.ammo[id]` stays id-free; callers add `id: player.weapon` at this seam.
-export function fire(weaponState, nowMs) {
+// `opts.rpm` overrides the cadence rate (e.g. perks.effectiveRpm for Double Tap); the
+// numbers otherwise stay locked to the WEAPONS table.
+export function fire(weaponState, nowMs, opts = {}) {
   const weapon = weaponFor(weaponState.id);
-  const cadenceMs = 60000 / weapon.rpm;
+  const cadenceMs = 60000 / (opts.rpm ?? weapon.rpm);
   const coolingDown = weaponState.lastShotMs !== undefined
     && nowMs - weaponState.lastShotMs < cadenceMs;
 
@@ -77,7 +79,8 @@ export function fire(weaponState, nowMs) {
 }
 
 // Starts a reload timer when there is room in the magazine and ammo in reserve.
-export function startReload(weaponState, nowMs) {
+// `opts.reloadMs` overrides the reload duration (e.g. perks.effectiveReloadMs for Speed Cola).
+export function startReload(weaponState, nowMs, opts = {}) {
   const weapon = weaponFor(weaponState.id);
   if (
     weaponState.reloadTimer !== undefined
@@ -87,7 +90,7 @@ export function startReload(weaponState, nowMs) {
     return { ...weaponState };
   }
 
-  return { ...weaponState, reloadTimer: nowMs + weapon.reloadMs };
+  return { ...weaponState, reloadTimer: nowMs + (opts.reloadMs ?? weapon.reloadMs) };
 }
 
 // Completes a pending reload once its timer has elapsed, clamping transfer to mag size.

@@ -128,6 +128,16 @@ describe("fire — cadence and magazine state", () => {
     expect(fire(empty, 1000)).toEqual({ state: empty, didFire: false });
     expect(fire(reloading, 1000)).toEqual({ state: reloading, didFire: false });
   });
+
+  it("honours an rpm override for the cadence gate (Double Tap), defaulting to the table", () => {
+    // thompson table rpm 700 -> ~85.7ms cadence; Double Tap (×1.33) -> ~64.5ms cadence.
+    const boosted = WEAPONS.thompson.rpm * 1.33;
+    const ws = deepFreeze({ id: "thompson", mag: 5, reserve: 10, lastShotMs: 1000 });
+    const t = 1000 + 70; // 70ms in: still cooling at table rpm, ready at the boosted rpm
+
+    expect(fire(ws, t).didFire).toBe(false);                  // default = table rpm
+    expect(fire(ws, t, { rpm: boosted }).didFire).toBe(true); // override = faster cadence
+  });
 });
 
 describe("reload — start and completion timing", () => {
@@ -145,6 +155,13 @@ describe("reload — start and completion timing", () => {
     expect(startReload(full, 100)).toEqual(full);
     expect(startReload(dry, 100)).toEqual(dry);
     expect(partial).toEqual({ id: "kar98k", mag: 2, reserve: 10 });
+  });
+
+  it("honours a reloadMs override for the timer (Speed Cola), defaulting to the table", () => {
+    const ws = deepFreeze({ id: "kar98k", mag: 2, reserve: 10 }); // table reloadMs 2200
+    // Speed Cola halves 2200 -> 1100, so the timer lands at now+1100 instead of now+2200.
+    expect(startReload(ws, 100, { reloadMs: 1100 }).reloadTimer).toBe(1200);
+    expect(startReload(ws, 100).reloadTimer).toBe(2300); // default = table reloadMs
   });
 
   it("waits for reloadMs, then transfers reserve into the magazine and clamps to magSize", () => {

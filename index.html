@@ -96,7 +96,7 @@
   import { isHeadshot } from "./src/hitzones.js";
   import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
   import { earn, spend } from "./src/economy.js";
-  import { PERKS, grantPerk, effectiveMaxHp } from "./src/perks.js";
+  import { PERKS, grantPerk, effectiveMaxHp, effectiveRpm, effectiveReloadMs } from "./src/perks.js";
   import { findInteractable } from "./src/interact.js";
   import { projectSprites, projectSprite } from "./src/sprites.js";
   import { tickShake, shakeOffset } from "./src/shake.js";
@@ -238,7 +238,13 @@
       reloadTimer: s.reloadTimer, lastShotMs: s.lastShotMs,
     };
   }
-  function tryStartReload() { writeWeapon(startReload(composeWeapon(), nowMs)); }
+  // Perk-adjusted cadence/reload for the equipped gun (Double Tap rpm, Speed Cola reload);
+  // both fall back to the WEAPONS table when the player owns no matching perk.
+  const perkRpm = () => effectiveRpm(player, WEAPONS[player.weapon].rpm);
+  const perkReloadMs = () => effectiveReloadMs(player, WEAPONS[player.weapon].reloadMs);
+  function tryStartReload() {
+    writeWeapon(startReload(composeWeapon(), nowMs, { reloadMs: perkReloadMs() }));
+  }
 
   // ---- Buying (input glue) ----
   // interact.findInteractable decides WHAT is in reach (the rule); economy.spend gates
@@ -324,9 +330,9 @@
     if (wantFire) {
       const ws = composeWeapon();
       if (ws.mag === 0 && ws.reloadTimer === undefined) {
-        writeWeapon(startReload(ws, nowMs));      // pull the trigger on empty → auto-reload
+        writeWeapon(startReload(ws, nowMs, { reloadMs: perkReloadMs() })); // empty → auto-reload
       } else {
-        const { state, didFire } = fireWeapon(ws, nowMs);
+        const { state, didFire } = fireWeapon(ws, nowMs, { rpm: perkRpm() });
         if (didFire) {
           writeWeapon(state);
           muzzleFlash = 0.05;
