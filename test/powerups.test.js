@@ -20,6 +20,13 @@ function rngSequence(values) {
   return () => values[index++];
 }
 
+function seededRng(seed) {
+  return () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+}
+
 describe("maybeDrop — deterministic floor drops", () => {
   it("returns null when the roll misses the locked 3% drop chance", () => {
     const zombie = deepFreeze({ id: "z1", x: 4.25, y: 6.5, hp: 0 });
@@ -31,7 +38,7 @@ describe("maybeDrop — deterministic floor drops", () => {
   it("creates a 15s drop at the zombie position when the roll is below 3%", () => {
     const zombie = deepFreeze({ id: "z7", x: 2.5, y: 8.75, hp: 0 });
 
-    expect(maybeDrop(zombie, rngSequence([0.029, 0.51]))).toEqual({
+    expect(maybeDrop(zombie, seededRng(1976))).toEqual({
       id: "powerup-z7",
       type: "instaKill",
       x: 2.5,
