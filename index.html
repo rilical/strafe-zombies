@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>STRAFE — raycaster baseplate</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #screen {
+    display: block;
+    width: 100vw; height: 100vh;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  #hud {
+    position: fixed; top: 10px; left: 12px;
+    font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    color: #b9f; text-shadow: 0 1px 2px #000; pointer-events: none;
+  }
+  #hint {
+    position: fixed; bottom: 12px; left: 0; right: 0; text-align: center;
+    font: 12px ui-monospace, monospace; color: #89a; text-shadow: 0 1px 2px #000;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <canvas id="screen" width="320" height="200"></canvas>
+  <div id="hud"></div>
+  <div id="hint">W/S move &nbsp;·&nbsp; A/D turn &nbsp;·&nbsp; Q/E strafe</div>
+
+  <script type="module">
+  import { MAP, MAP_W, MAP_H, castRay, moveWithCollision } from "./src/engine.js";
+
+  const canvas = document.getElementById("screen");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const hud = document.getElementById("hud");
+
+  // Player state (map units + heading in radians).
+  let posX = 2.5, posY = 2.5, angle = 0.4;
+  const FOV = 0.66;            // camera-plane half-width (~66° field of view)
+  const MOVE = 2.6;            // units / second
+  const TURN = 2.4;            // radians / second
+  const MAX_VIEW = 16;         // distance fog falls off over this many cells
+
+  // Base colors per wall type; index 0 unused.
+  const WALL_COLORS = [null, [176, 58, 58], [70, 120, 70], [70, 100, 150]];
+
+  const keys = Object.create(null);
+  addEventListener("keydown", (e) => { keys[e.code] = true; });
+  addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  function update(dt) {
+    if (keys.KeyA || keys.ArrowLeft) angle -= TURN * dt;
+    if (keys.KeyD || keys.ArrowRight) angle += TURN * dt;
+
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    let mx = 0, my = 0;
+    if (keys.KeyW || keys.ArrowUp)   { mx += dirX; my += dirY; }
+    if (keys.KeyS || keys.ArrowDown) { mx -= dirX; my -= dirY; }
+    if (keys.KeyQ) { mx += dirY; my -= dirX; }   // strafe left
+    if (keys.KeyE) { mx -= dirY; my += dirX; }   // strafe right
+
+    const len = Math.hypot(mx, my);
+    if (len > 0) {
+      mx = (mx / len) * MOVE * dt;
+      my = (my / len) * MOVE * dt;
+      const p = moveWithCollision(MAP, posX, posY, mx, my);
+      posX = p.x; posY = p.y;
+    }
+  }
+
+  function render() {
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const planeX = -dirY * FOV, planeY = dirX * FOV;
+
+    // Ceiling and floor.
+    ctx.fillStyle = "#15151b"; ctx.fillRect(0, 0, W, H / 2);
+    ctx.fillStyle = "#2c2c30"; ctx.fillRect(0, H / 2, W, H / 2);
+
+    // Wall columns.
+    for (let x = 0; x < W; x++) {
+      const cameraX = (2 * x) / W - 1;
+      const rayDirX = dirX + planeX * cameraX;
+      const rayDirY = dirY + planeY * cameraX;
+
+      const hit = castRay(MAP, posX, posY, rayDirX, rayDirY);
+      const dist = Math.max(hit.perpWallDist, 0.0001);
+
+      const lineHeight = Math.floor(H / dist);
+      let drawStart = Math.floor(-lineHeight / 2 + H / 2);
+      let drawEnd = Math.floor(lineHeight / 2 + H / 2);
+      if (drawStart < 0) drawStart = 0;
+      if (drawEnd > H) drawEnd = H;
+
+      const base = WALL_COLORS[hit.wall] || WALL_COLORS[1];
+      const sideMul = hit.side === 1 ? 0.65 : 1;          // fake directional light
+      const fog = Math.max(0.15, 1 - dist / MAX_VIEW);     // darken with distance
+      const k = sideMul * fog;
+      ctx.fillStyle =
+        "rgb(" + ((base[0] * k) | 0) + "," + ((base[1] * k) | 0) + "," + ((base[2] * k) | 0) + ")";
+      ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+    }
+
+    drawMinimap();
+  }
+
+  function drawMinimap() {
+    const s = 5, ox = W - MAP_W * s - 4, oy = 4;
+    ctx.globalAlpha = 0.8;
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        ctx.fillStyle = MAP[y][x] ? "#566" : "#111";
+        ctx.fillRect(ox + x * s, oy + y * s, s - 1, s - 1);
+      }
+    }
+    ctx.fillStyle = "#ff5";
+    ctx.fillRect(ox + posX * s - 1, oy + posY * s - 1, 2, 2);
+    ctx.strokeStyle = "#ff5";
+    ctx.beginPath();
+    ctx.moveTo(ox + posX * s, oy + posY * s);
+    ctx.lineTo(ox + (posX + Math.cos(angle) * 1.5) * s, oy + (posY + Math.sin(angle) * 1.5) * s);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  let last = performance.now(), frames = 0, fps = 0, acc = 0;
+  function loop(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    update(dt);
+    render();
+
+    frames++; acc += dt;
+    if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
+    hud.textContent =
+      "fps " + fps + "  ·  x " + posX.toFixed(2) + "  y " + posY.toFixed(2) +
+      "  ·  " + ((angle * 180 / Math.PI) % 360 | 0) + "°";
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
