@@ -48,6 +48,12 @@ glue is thin and lives in `index.html`.** Anything you'd want to unit-test belon
   fisheye.
 - `isWalkable`, `moveWithCollision` — per-axis collision so entities slide along walls.
 
+### `src/game.js`
+- `stepZombie(map, zombie, target, dt, speed)` — advances one zombie toward the target
+  by `speed * dt` units, sliding along walls via `moveWithCollision`. Pure: returns a new
+  entity and never mutates its input. This is the seed of the chase AI; future gameplay
+  (spawning, damage, shooting) lands here as more pure, tested functions.
+
 ### `index.html`
 - Owns player state, the input map, the rAF loop, and all drawing.
 - Calls only pure functions from `src/`; holds no game *rules* itself beyond wiring.
