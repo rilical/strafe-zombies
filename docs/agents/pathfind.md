@@ -12,17 +12,21 @@ wall-slide. **Supersedes** `game.js`'s straight-line `stepZombie` (which gets st
 
 ## Contract — you MUST export (exact)
 ```js
-buildFlowField(level, world, col, row) -> Int8Array   // BFS from player cell over walkable cells
+buildFlowField(level, world, col, row, isBlocked) -> Int8Array   // BFS from player cell over walkable cells
 flowDir(field, W, col, row) -> { dx, dy }             // unit-ish step toward the player (downhill)
-stepZombieAlong(level, world, zombie, field, dt, speed) -> zombie'  // move + wall-slide
+stepZombieAlong(level, world, zombie, field, dt, speed, isBlocked) -> zombie'  // move + wall-slide
 ```
-Walkable = `!barriers.isBlocked(level, world, cx, cy)` (4-connectivity). Model the movement
-and wall-slide on the existing `game.js stepZombie` + `engine.moveWithCollision` (per-axis
-slide) — **reuse, don't reinvent**.
+Walkable = `!isBlocked(level, world, cx, cy)` (4-connectivity). **`isBlocked` is injected**
+— a predicate `(level, world, cx, cy) -> boolean` passed in by the caller (integration supplies
+`barriers.isBlocked`; your tests supply a tiny fixture predicate). **Do NOT import `barriers`** —
+this keeps `pathfind` pure and buildable in parallel. Model the movement and wall-slide on the
+existing `game.js stepZombie` + `engine.moveWithCollision` (per-axis slide) — **reuse the style,
+don't reinvent** — but gate passability through the injected `isBlocked`, not the static map.
 
 ## Consumes
-`engine` (`moveWithCollision`), `LEVEL`/`world` shape, `barriers.isBlocked`. Use fixtures in
-tests. **Add `pathfind.js` only — do NOT delete `game.js`**; the integration agent retires it.
+`engine` (for the per-axis wall-slide *style*), the `LEVEL`/`world` shape, and an **injected
+`isBlocked` predicate** (never imported). Use fixtures in tests. **Add `pathfind.js` only — do
+NOT delete `game.js`**; the integration agent retires it.
 
 ## Consumed by
 The integration loop (rebuild the field when the player changes cell; step every zombie).
