@@ -81,6 +81,7 @@
   const EDGE_TURN = 2.8;      // max turn radians / second at the very edge (free-aim 360°)
   const MAX_VIEW = 16;         // distance fog falls off over this many cells
   const MAX_SHAKE_PX = 5;      // peak screen-shake translation (px) at full trauma
+  const CORPSE_MS = 700;       // how long a slain zombie's body fades on the floor
 
   const ZOMBIE_HP = 150;       // MVP placeholder until rounds.js scales HP per round
   const ZOMBIE_SPEED = 1.15;   // map cells / second (slower than the player, so you can kite)
@@ -101,6 +102,7 @@
   // ---- Mutable game state (player matches the frozen GameState contract) ----
   let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, hitMarker, nowMs;
   let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
+  let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
   let cursorX = W / 2, cursorY = H / 2;
 
@@ -126,6 +128,7 @@
     hitMarker = 0;
     nowMs = 0;
     trauma = 0; popups = []; blood = []; sparks = [];
+    hitFlash = {}; corpses = []; bobPhase = 0; recoil = 0; moving = false;
     overlay.classList.remove("show");
   }
   reset();
@@ -202,6 +205,8 @@
         (mx / len) * MOVE * dt, (my / len) * MOVE * dt);
       player = { ...player, x: p.x, y: p.y };
     }
+    moving = len > 0;
+    if (moving) bobPhase += dt * 9;       // view-bob advances with the player's strides
 
     // Free-aim: derive the shot direction from the same camera ray the renderer uses
     // for the crosshair's column, so the bullet lands exactly where the crosshair sits.
@@ -224,6 +229,7 @@
         if (didFire) {
           writeWeapon(state);
           muzzleFlash = 0.05;
+          recoil = 1;                             // weapon kick + crosshair bloom
           trauma = Math.min(1, trauma + 0.16);    // every shot kicks the camera a little
           const res = resolveShot(MAP, player, zombies, weapon, aimAngle);
           if (res.scoreDelta > 0) {
@@ -234,9 +240,11 @@
               if (before && z.hp < before.hp) { hz = z; break; }
             }
             if (hz) {
+              hitFlash[hz.id] = nowMs;                                // white flash on the hit
               blood = spawnBloodPuff(blood, hz.x, hz.y);              // spray at the world hit
               const pr = projectSprite(player, FOV, W, H, hz);
               if (pr.visible) popups = spawnPopup(popups, pr.screenX, pr.drawStartY, res.scoreDelta);
+              if (res.killedId != null) corpses.push({ x: hz.x, y: hz.y, bornMs: nowMs });
               trauma = Math.min(1, trauma + (res.killedId != null ? 0.3 : 0.12));
             }
             player = earn(player, res.scoreDelta);
@@ -283,6 +291,9 @@
     blood = tickParticles(blood, dt);
     sparks = tickParticles(sparks, dt);
     popups = tickPopups(popups, dt);
+    recoil = Math.max(0, recoil - dt * 6);           // recoil settles in ~0.16s
+    corpses = corpses.filter((c) => nowMs - c.bornMs < CORPSE_MS);
+    for (const id in hitFlash) if (nowMs - hitFlash[id] > 200) delete hitFlash[id];
     if (muzzleFlash > 0) muzzleFlash -= dt;
     if (hitMarker > 0) hitMarker -= dt;
     if (isGameOver(player)) endGame();
@@ -360,6 +371,7 @@
       }
     }
 
+    drawCorpses();
     drawZombies();
     drawParticles();
     ctx.restore();                 // end the world-shake layer; UI below is steady
@@ -373,51 +385,107 @@
     drawMinimap();
   }
 
-  // Billboard zombies via sprites.projectSprites, depth-clipped per column.
+  // Billboard zombies as a hunched humanoid silhouette (head, shoulders, dangling arms,
+  // legs), depth-clipped per column. White flash on a fresh hit; a slow lurching sway.
   function drawZombies() {
     for (const p of projectSprites(player, FOV, W, H, zombies)) {
-      const h = p.drawEndY - p.drawStartY;
-      const fullW = p.scale * 0.55;
+      const z = p.sprite;
+      const top = p.drawStartY, h = p.drawEndY - p.drawStartY;
+      const fullW = p.scale * 0.5;
       const left = Math.floor(p.screenX - fullW / 2);
       const right = Math.ceil(p.screenX + fullW / 2);
-      const fog = Math.max(0.2, 1 - p.depth / MAX_VIEW);
-      const topBody = p.drawStartY + h * 0.28;
+      const span = right - left;
+      const sway = Math.sin(nowMs * 0.005 + z.id * 1.7) * 0.06;   // lurch in u-space
+      const fog = Math.max(0.25, 1 - p.depth / MAX_VIEW);
+      const flash = nowMs - (hitFlash[z.id] || -1e9) < 110;
+      const body = flash ? [235, 238, 235] : [66, 92, 60];        // rotting greens, or
+      const limb = flash ? [220, 224, 220] : [52, 70, 48];        // near-white on a hit
+      const head = flash ? [240, 240, 235] : [120, 118, 96];
+
       for (let x = left; x < right; x++) {
         if (x < 0 || x >= W || p.depth >= zbuffer[x]) continue;   // wall occludes
-        const u = (right === left) ? 0.5 : (x - left) / (right - left);
-        const shade = (0.65 + 0.35 * (1 - Math.abs(u - 0.5) * 2)) * fog;
-        ctx.fillStyle = rgb(58 * shade, 128 * shade, 58 * shade);  // tattered body
-        ctx.fillRect(x, topBody, 1, p.drawEndY - topBody);
-        if (u > 0.3 && u < 0.7) {                                   // head band
-          ctx.fillStyle = rgb(120 * shade, 128 * shade, 96 * shade);
-          ctx.fillRect(x, p.drawStartY, 1, h * 0.3);
+        const u = (span <= 1 ? 0.5 : (x - left) / span) - sway;
+        if ((u > 0.34 && u < 0.46) || (u > 0.54 && u < 0.66)) {   // legs
+          const s = fog * 0.8;
+          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
+          ctx.fillRect(x, top + h * 0.62, 1, h * 0.38);
+        }
+        if ((u > 0.16 && u < 0.30) || (u > 0.70 && u < 0.84)) {   // dangling arms
+          const s = fog * 0.85;
+          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
+          ctx.fillRect(x, top + h * 0.26, 1, h * 0.34);
+        }
+        if (u > 0.30 && u < 0.70) {                               // hunched torso
+          const s = (0.7 + 0.3 * (1 - Math.abs(u - 0.5) * 2)) * fog;
+          ctx.fillStyle = rgb(body[0] * s, body[1] * s, body[2] * s);
+          ctx.fillRect(x, top + h * 0.22, 1, h * 0.42);
+        }
+        if (u > 0.40 && u < 0.60) {                               // head
+          ctx.fillStyle = rgb(head[0] * fog, head[1] * fog, head[2] * fog);
+          ctx.fillRect(x, top + h * 0.04, 1, h * 0.20);
         }
       }
-      // Glowing eyes, only when the centre column is unoccluded.
+      // Glowing eyes when the centre column is visible (and not whited-out by a hit).
       const cxi = Math.floor(p.screenX);
-      if (h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
-        ctx.fillStyle = "#f44";
-        const ew = Math.max(1, fullW * 0.07), eh = Math.max(1, h * 0.045);
-        const ey = p.drawStartY + h * 0.12;
-        ctx.fillRect(p.screenX - fullW * 0.17, ey, ew, eh);
-        ctx.fillRect(p.screenX + fullW * 0.10, ey, ew, eh);
+      if (!flash && h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
+        ctx.fillStyle = "#f55";
+        const ew = Math.max(1, fullW * 0.06), eh = Math.max(1, h * 0.035);
+        const ey = top + h * 0.10, dx = sway * span;
+        ctx.fillRect(p.screenX - fullW * 0.12 - dx, ey, ew, eh);
+        ctx.fillRect(p.screenX + fullW * 0.06 - dx, ey, ew, eh);
+      }
+    }
+  }
+
+  // Slain zombies leave a dark mound that collapses to the floor and fades over CORPSE_MS.
+  function drawCorpses() {
+    for (const c of corpses) {
+      const life = (nowMs - c.bornMs) / CORPSE_MS;
+      if (life >= 1) continue;
+      const pr = projectSprite(player, FOV, W, H, c);
+      if (!pr.visible) continue;
+      const h = pr.drawEndY - pr.drawStartY;
+      const fullW = pr.scale * 0.5;
+      const left = Math.floor(pr.screenX - fullW / 2);
+      const right = Math.ceil(pr.screenX + fullW / 2);
+      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+      const a = (1 - life) * fog;
+      const top = pr.drawStartY + h * (0.55 + 0.4 * life);        // sinks as it fades
+      ctx.fillStyle = "rgba(" + ((58 * fog) | 0) + "," + ((26 * fog) | 0) + "," +
+        ((26 * fog) | 0) + "," + a.toFixed(3) + ")";
+      for (let x = left; x < right; x++) {
+        if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+        ctx.fillRect(x, top, 1, pr.drawEndY - top);
       }
     }
   }
 
   function drawWeapon() {
     const gunW = W * 0.22, gunH = H * 0.18;
-    const recoil = muzzleFlash > 0 ? 3 : 0;
-    const gx = W / 2 + (cursorX - W / 2) * 0.5;   // the gun leans toward the cursor
-    const gy = H - gunH + recoil;
-    ctx.fillStyle = "#1b1b22";
-    ctx.fillRect(gx - gunW * 0.20, gy, gunW * 0.40, gunH);       // body
-    ctx.fillRect(gx - 2, gy - gunH * 0.30, 4, gunH * 0.35);      // barrel
+    const kick = recoil * 6;                              // recoil drops the gun down/back
+    const bobX = Math.cos(bobPhase) * (moving ? 2.5 : 0.6);
+    const bobY = Math.abs(Math.sin(bobPhase)) * (moving ? 3 : 0.8);
+    const gx = W / 2 + (cursorX - W / 2) * 0.5 + bobX;   // leans toward the cursor + sways
+    const gy = H - gunH + kick + bobY;
+
+    // Muzzle flash briefly floods the lower scene with warm light.
     if (muzzleFlash > 0) {
-      ctx.fillStyle = "rgba(255,220,120,0.9)";
-      ctx.beginPath();
-      ctx.arc(gx, gy - gunH * 0.30, 6, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillStyle = "rgba(255,230,150," + ((muzzleFlash / 0.05) * 0.22).toFixed(3) + ")";
+      ctx.fillRect(0, H * 0.5, W, H * 0.5);
+    }
+    ctx.fillStyle = "#15151b";
+    ctx.fillRect(gx - gunW * 0.22, gy + gunH * 0.10, gunW * 0.44, gunH);   // grip / body
+    ctx.fillStyle = "#23232e";
+    ctx.fillRect(gx - gunW * 0.10, gy - gunH * 0.05, gunW * 0.20, gunH * 0.5); // slide
+    ctx.fillStyle = "#0e0e14";
+    ctx.fillRect(gx - 2.5, gy - gunH * 0.32, 5, gunH * 0.42);              // barrel
+    if (muzzleFlash > 0) {
+      const r = 5 + recoil * 6, fy = gy - gunH * 0.34;
+      const g = ctx.createRadialGradient(gx, fy, 0, gx, fy, r);
+      g.addColorStop(0, "rgba(255,250,210,0.95)");
+      g.addColorStop(1, "rgba(255,170,60,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(gx, fy, r, 0, Math.PI * 2); ctx.fill();
     }
   }
 
@@ -430,14 +498,17 @@
 
   function drawCrosshair() {
     const cx = cursorX, cy = cursorY;
-    ctx.strokeStyle = "rgba(230,230,240,0.85)";
+    const spread = 2 + recoil * 5 + (moving ? 1.5 : 0);   // gap blooms when firing/moving
+    ctx.strokeStyle = "rgba(230,235,245,0.9)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(cx - 5, cy); ctx.lineTo(cx - 2, cy);
-    ctx.moveTo(cx + 2, cy); ctx.lineTo(cx + 5, cy);
-    ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy - 2);
-    ctx.moveTo(cx, cy + 2); ctx.lineTo(cx, cy + 5);
+    ctx.moveTo(cx - spread - 3, cy); ctx.lineTo(cx - spread, cy);
+    ctx.moveTo(cx + spread, cy); ctx.lineTo(cx + spread + 3, cy);
+    ctx.moveTo(cx, cy - spread - 3); ctx.lineTo(cx, cy - spread);
+    ctx.moveTo(cx, cy + spread); ctx.lineTo(cx, cy + spread + 3);
     ctx.stroke();
+    ctx.fillStyle = "rgba(230,235,245,0.9)";
+    ctx.fillRect(cx, cy, 1, 1);               // centre dot
     if (hitMarker > 0) {                      // brief red X when a shot connects
       ctx.strokeStyle = "rgba(255,80,80,0.95)";
       ctx.beginPath();
