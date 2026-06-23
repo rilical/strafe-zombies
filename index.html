@@ -110,6 +110,7 @@
   import { spawnPopup, tickPopups } from "./src/popups.js";
   import { spawnBloodPuff, spawnSpark, tickParticles } from "./src/particles.js";
   import { buildVoice } from "./src/sfx.js";
+  import { addDecal, tickDecals, projectWallDecal, projectFloorDecal } from "./src/decals.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -221,7 +222,7 @@
   let world, spawnState, flowField, flowCol, flowRow;   // barrier overlay, rounds SM, BFS field
   let dynMap, buyTarget, buyMsg, buyMsgT;   // live map (opened doors), current buyable, buy cue
   let powerUps, activePowerUps, nukeFlash, announcedRound;  // floor drops, timed effects, nuke flash, round-howl latch
-  let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
+  let trauma, popups, blood, sparks, decals;   // game-juice state: shake, +N popups, particles, persistent decals
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
   let cursorX = W / 2, cursorY = H / 2;
@@ -253,7 +254,7 @@
     hitMarker = 0;
     headshotFlash = 0;
     nowMs = 0;
-    trauma = 0; popups = []; blood = []; sparks = [];
+    trauma = 0; popups = []; blood = []; sparks = []; decals = [];
     hitFlash = {}; corpses = []; bobPhase = 0; recoil = 0; moving = false;
     overlay.classList.remove("show");
   }
@@ -439,6 +440,7 @@
               if (pr.visible) popups = spawnPopup(popups, pr.screenX, pr.drawStartY, gained);
               if (res.killedId != null) {
                 corpses.push({ x: hz.x, y: hz.y, bornMs: nowMs });
+                decals = addDecal(decals, { x: hz.x, y: hz.y, kind: "blood", ttl: 12 }, 96);  // blood pool dries over 12s
                 // Classic on-kill power-up roll: ~3% chance to leave a floor drop.
                 const drop = maybeDrop(hz, Math.random);
                 if (drop) powerUps.push(drop);
@@ -455,6 +457,8 @@
             const wh = castRay(dynMap, player.x, player.y, ca, sa);
             const d = Math.min(wh.perpWallDist, MAX_VIEW);
             sparks = spawnSpark(sparks, player.x + ca * d, player.y + sa * d);
+            if (d < MAX_VIEW)   // a bullet that found a wall leaves a permanent hole
+              decals = addDecal(decals, { x: player.x + ca * d, y: player.y + sa * d, kind: "hole", ttl: Infinity }, 96);
           }
           zombies = res.zombies.filter((z) => z.hp > 0);
         }
@@ -539,6 +543,7 @@
     trauma = tickShake(trauma, dt);                  // trauma decays; shake follows
     blood = tickParticles(blood, dt);
     sparks = tickParticles(sparks, dt);
+    decals = tickDecals(decals, dt);                 // age blood pools (cull on ttl); holes are permanent
     popups = tickPopups(popups, dt);
     recoil = Math.max(0, recoil - dt * 6);           // recoil settles in ~0.16s
     corpses = corpses.filter((c) => nowMs - c.bornMs < CORPSE_MS);
@@ -624,6 +629,7 @@
       }
     }
 
+    drawDecals();
     drawCorpses();
     drawPowerUps();
     drawZombies();
@@ -696,6 +702,42 @@
         ctx.fillStyle = "#ff3024";                   // hot pupils, mirrored about the centre
         ctx.fillRect(hc - sep - ew, ey, ew, eh);
         ctx.fillRect(hc + sep, ey, ew, eh);
+      }
+    }
+  }
+
+  // Persistent marks from src/decals.js: bullet holes pinned to walls + blood pools on the
+  // floor. decals.js owns the list lifetime + projection math; this only paints each mark and
+  // depth-clips it against the wall buffer so a mark behind a nearer wall stays hidden.
+  function drawDecals() {
+    for (const d of decals) {
+      const fade = d.fade ?? 1;
+      if (fade <= 0) continue;
+      if (d.kind === "blood") {
+        const pr = projectFloorDecal(player, FOV, W, H, d);
+        if (!pr.visible) continue;
+        const fog = Math.max(0.2, 1 - pr.depth / MAX_VIEW);
+        const rx = Math.min(80, Math.max(2, pr.scale * 0.12));
+        const ry = Math.max(1, rx * 0.42);                          // flattened by floor perspective
+        const a = (0.5 * fade * fog).toFixed(3);
+        ctx.fillStyle = "rgba(86,12,12," + a + ")";
+        for (let x = Math.floor(pr.screenX - rx); x < Math.ceil(pr.screenX + rx); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x]) continue;   // a nearer wall hides the floor
+          const dy = ry * Math.sqrt(Math.max(0, 1 - ((x - pr.screenX) / rx) ** 2));
+          ctx.fillRect(x, pr.screenY - dy, 1, dy * 2);
+        }
+      } else {
+        const pr = projectWallDecal(player, FOV, W, H, d);
+        if (!pr.visible) continue;
+        const fog = Math.max(0.2, 1 - pr.depth / MAX_VIEW);
+        const r = Math.min(28, Math.max(1.5, pr.scale * 0.04));
+        const a = (0.55 * fade * fog).toFixed(3);
+        ctx.fillStyle = "rgba(16,12,10," + a + ")";
+        for (let x = Math.floor(pr.screenX - r); x < Math.ceil(pr.screenX + r); x++) {
+          if (x < 0 || x >= W || pr.depth > zbuffer[x] + 0.12) continue;  // only on its own (or a nearer) wall
+          const dy = r * Math.sqrt(Math.max(0, 1 - ((x - pr.screenX) / r) ** 2));
+          ctx.fillRect(x, pr.screenY - dy, 1, dy * 2);
+        }
       }
     }
   }
