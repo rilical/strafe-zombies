@@ -83,7 +83,7 @@ export const LEVEL = {
   // faceX/faceY points toward the player (the walkable cell they stand in to buy).
   mounts: [
     { id: "m1", weaponId: "kar98k",    cost:  200, cx:  5, cy:  7, faceX: -1, faceY:  0 }, // west corridor
-    { id: "m2", weaponId: "m1carbine", cost:  600, cx:  7, cy:  5, faceX:  0, faceY: -1 }, // north passage
+    { id: "m2", weaponId: "carbine",   cost:  600, cx:  7, cy:  5, faceX:  0, faceY: -1 }, // north passage
     { id: "m3", weaponId: "thompson",  cost: 1200, cx: 10, cy:  8, faceX:  1, faceY:  0 }, // east corridor
   ],
 
@@ -91,11 +91,12 @@ export const LEVEL = {
   box: { cx: 13, cy: 12 },
 
   // Perk-a-Cola machines — one per room, positioned against inner walls.
+  // perkId values match the canonical ids in src/perks.js (jugg / speedCola / doubleTap).
   // The integration agent shows a buy prompt when the player is adjacent.
   perkMachines: [
-    { id: "perk-juggernog", perkId: "juggernog", cost: 2500, cx:  2, cy:  3 }, // Room A
-    { id: "perk-speedcola", perkId: "speedcola", cost: 3000, cx: 12, cy:  3 }, // Room B
-    { id: "perk-doubletap", perkId: "doubletap", cost: 2000, cx:  3, cy: 12 }, // Room D
+    { id: "perk-juggernog", perkId: "jugg",      cost: 2500, cx:  2, cy:  3 }, // Room A
+    { id: "perk-speedcola", perkId: "speedCola", cost: 3000, cx: 12, cy:  3 }, // Room B
+    { id: "perk-doubletap", perkId: "doubleTap", cost: 2000, cx:  3, cy: 12 }, // Room D
   ],
 
   // Debris doors — cells are solid (type 3) in the base grid.

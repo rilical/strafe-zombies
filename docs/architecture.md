@@ -43,8 +43,9 @@ glue is thin and lives in `index.html`.** Anything you'd want to unit-test belon
 
 ### `src/engine.js`
 - `MAP`, `MAP_W`, `MAP_H` — the original demo grid. The **playable Nacht map now lives in
-  `src/level.js`** as `LEVEL` (see below); `index.html` renders and collides against
-  `LEVEL.grid`, while `engine.MAP` remains only as a small standalone fixture.
+  `src/level.js`** as `LEVEL` (see below); `index.html` renders and collides against a
+  mutable per-game copy of `LEVEL.grid` (`dynMap`) so a bought debris door can be zeroed
+  open, while `engine.MAP` remains only as a small standalone fixture.
 - `wallAt(map, x, y)` — wall lookup; out-of-bounds is solid.
 - `castRay(map, posX, posY, rayDirX, rayDirY)` — DDA raycast returning
   `{ perpWallDist, side, mapX, mapY, wall }`. `perpWallDist` is perpendicular to avoid
@@ -64,6 +65,24 @@ The Nacht survival systems, each pure and unit-tested (frozen contracts in
 - `pathfind.js` — a BFS **flow field** (`buildFlowField`, `flowDir`, `stepZombieAlong`) the
   zombies follow around the core. This **supersedes the original straight-line `stepZombie`**
   (the retired `src/game.js`); `index.html` rebuilds the field when the player changes cell.
+
+### Economy & buying — `economy.js`, `weapons.js`, `perks.js`, `interact.js`
+The points-and-purchase chain. Each is pure and unit-tested; `index.html` only sequences them:
+- `economy.js` — `earn`/`spend(player, cost) → { ok, player }` (the affordability gate) plus
+  `pointsForHit`/`pointsForKill`.
+- `weapons.js` — the `WEAPONS` data table and `buyWallWeapon`/`rollMysteryBox` (grant + equip
+  at full ammo; **neither charges** — wiring composes `economy.spend` first).
+- `perks.js` — `PERKS` and `grantPerk` + the `effective*` stat multipliers (Juggernog raises
+  the HP cap; Speed Cola / Double Tap effects are a later wiring task).
+- `interact.js` — `findInteractable(level, world, player)` returns the nearest in-reach buyable
+  (mount / box / perk / debris) so `index.html` stays rule-free. It hides already-open doors
+  and owned perks, which is why `LEVEL.perkMachines` perkIds and `LEVEL.mounts` weaponIds must
+  match the canonical ids in `perks.js`/`weapons.js`.
+
+`index.html` wires these to the **F key**: `tryBuy` calls `findInteractable`, gates on
+`spend`, then dispatches by kind (buy the wall gun / roll the box / pour the perk / open the
+door + zero its `dynMap` cells and force a flow-field rebuild). The HUD shows the nearest
+buyable as a prompt, greyed when unaffordable.
 
 ### `index.html`
 - Owns player state, the input map, the rAF loop, and all drawing.

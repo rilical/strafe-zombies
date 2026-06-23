@@ -23,7 +23,8 @@ npm run serve        # python3 -m http.server 8731
 # then visit http://localhost:8731/index.html
 ```
 
-**Controls:** `W`/`S` move · `A`/`D` turn · `Q`/`E` strafe (arrow keys also work).
+**Controls:** `W`/`A`/`S`/`D` move · mouse aims the gun · screen edges turn · click / hold to
+shoot · `R` reload · `F` buy (wall guns, perks, the Mystery Box, and debris doors).
 
 ## Develop it
 

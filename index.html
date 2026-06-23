@@ -49,6 +49,13 @@
     font: 12px ui-monospace, monospace; color: #89a; text-shadow: 0 1px 2px #000;
     pointer-events: none;
   }
+  #buyprompt {
+    position: fixed; bottom: 40px; left: 0; right: 0; text-align: center;
+    font: 700 16px ui-monospace, monospace; color: #ffd54a; text-shadow: 0 2px 4px #000;
+    pointer-events: none; opacity: 0; transition: opacity .12s;
+  }
+  #buyprompt.show { opacity: 1; }
+  #buyprompt.poor { color: #e2706b; }   /* in range but can't afford it yet */
   #overlay {
     position: fixed; inset: 0; display: none; z-index: 70;
     flex-direction: column; align-items: center; justify-content: center; gap: 8px;
@@ -65,7 +72,8 @@
   <div id="lowhp"></div>
   <div id="hud"><div id="points">0</div><div id="round">ROUND <b>1</b></div></div>
   <div id="ammo"><div id="weapon"></div><span id="mag">0</span> <small id="reserve">/ 0</small></div>
-  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims the gun &nbsp;·&nbsp; screen edges turn &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload</div>
+  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims the gun &nbsp;·&nbsp; screen edges turn &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload &nbsp;·&nbsp; F buy</div>
+  <div id="buyprompt"></div>
   <div id="overlay"></div>
   <div id="crt"></div>
 
@@ -78,15 +86,18 @@
   // ---------------------------------------------------------------------------
   import { castRay, moveWithCollision } from "./src/engine.js";
   import { LEVEL } from "./src/level.js";
-  import { createWorld, isBlocked } from "./src/barriers.js";
+  import { createWorld, isBlocked, openDoor } from "./src/barriers.js";
   import { createSpawnState, tickSpawner, advanceRound,
            zombieHealthForRound, zombieSpeedForRound } from "./src/rounds.js";
   import { buildFlowField, stepZombieAlong } from "./src/pathfind.js";
-  import { WEAPONS, fire as fireWeapon, startReload, tickReload } from "./src/weapons.js";
+  import { WEAPONS, fire as fireWeapon, startReload, tickReload,
+           buyWallWeapon, rollMysteryBox } from "./src/weapons.js";
   import { resolveShot, shootRay } from "./src/shooting.js";
   import { isHeadshot } from "./src/hitzones.js";
   import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
-  import { earn } from "./src/economy.js";
+  import { earn, spend } from "./src/economy.js";
+  import { PERKS, grantPerk, effectiveMaxHp } from "./src/perks.js";
+  import { findInteractable } from "./src/interact.js";
   import { projectSprites, projectSprite } from "./src/sprites.js";
   import { tickShake, shakeOffset } from "./src/shake.js";
   import { spawnPopup, tickPopups } from "./src/popups.js";
@@ -103,6 +114,7 @@
   const reserveEl = document.getElementById("reserve");
   const weaponEl = document.getElementById("weapon");
   const lowhpEl = document.getElementById("lowhp");
+  const buypromptEl = document.getElementById("buyprompt");
   let lastPoints = -1;
 
   // Cached gradients for the sky/floor backdrop and the screen-edge vignette.
@@ -143,6 +155,7 @@
   // ---- Mutable game state (player matches the frozen GameState contract) ----
   let player, zombies, nextZombieId, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
   let world, spawnState, flowField, flowCol, flowRow;   // barrier overlay, rounds SM, BFS field
+  let dynMap, buyTarget, buyMsg, buyMsgT;   // live map (opened doors), current buyable, buy cue
   let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
@@ -165,8 +178,10 @@
     zombies = [];
     nextZombieId = 1;
     world = createWorld(LEVEL);             // mutable barrier overlay (doors/boards)
+    dynMap = LEVEL.grid.map((row) => row.slice());   // live map; opened doors get zeroed in
     spawnState = createSpawnState(1);       // rounds.js owns wave pacing + escalation
     flowField = null; flowCol = -1; flowRow = -1;   // forces a field build on frame 1
+    buyTarget = null; buyMsg = ""; buyMsgT = 0;     // no buyable in reach, no purchase cue
     gameOver = false;
     muzzleFlash = 0;
     hitMarker = 0;
@@ -183,6 +198,7 @@
   addEventListener("keydown", (e) => {
     keys[e.code] = true;
     if (e.code === "KeyR" && !gameOver) tryStartReload();
+    if (e.code === "KeyF" && !e.repeat && !gameOver) tryBuy();
     if (e.code === "Enter" && gameOver) reset();
   });
   addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -224,6 +240,46 @@
   }
   function tryStartReload() { writeWeapon(startReload(composeWeapon(), nowMs)); }
 
+  // ---- Buying (input glue) ----
+  // interact.findInteractable decides WHAT is in reach (the rule); economy.spend gates
+  // the points; then the owning module grants the gun / rolls the box / pours the perk /
+  // opens the door. No buy rules live here — index.html only sequences the pure calls.
+  function tryBuy() {
+    const it = findInteractable(LEVEL, world, player);
+    if (!it || player.points < it.cost) return;
+    const paid = spend(player, it.cost);
+    if (!paid.ok) return;
+    player = paid.player;
+    if (it.kind === "mount") {
+      player = buyWallWeapon(player, it.weaponId);          // grant + equip at full ammo
+      player = { ...player, reloadTimer: undefined, lastShotMs: undefined };  // fresh gun
+      flashBuy(WEAPONS[it.weaponId].name);
+    } else if (it.kind === "box") {
+      const roll = rollMysteryBox(player, Math.random);     // random weapon, then equip
+      player = { ...roll.player, reloadTimer: undefined, lastShotMs: undefined };
+      flashBuy(WEAPONS[roll.weaponId].name + "!");
+    } else if (it.kind === "perk") {
+      player = grantPerk(player, it.perkId);
+      player = { ...player, maxHp: effectiveMaxHp(player) }; // Juggernog raises the HP cap
+      flashBuy(PERKS[it.perkId].name);
+    } else if (it.kind === "debris") {
+      world = openDoor(world, it.id);                       // barrier overlay: door now open
+      const door = LEVEL.debris.find((d) => d.id === it.id);
+      for (const [cx, cy] of door.cells) dynMap[cy][cx] = 0; // reveal the passage for the player
+      flowField = null;                                     // force a flow-field rebuild
+      flashBuy("DOOR OPEN");
+    }
+  }
+  function flashBuy(text) { buyMsg = text; buyMsgT = 1.4; }   // brief centred confirmation cue
+
+  // Display name for the buy prompt — reads the owning module's data so labels never drift.
+  function buyLabel(it) {
+    if (it.kind === "mount") return WEAPONS[it.weaponId].name;
+    if (it.kind === "box")   return "Mystery Box";
+    if (it.kind === "perk")  return PERKS[it.perkId].name;
+    return "Open Door";   // debris
+  }
+
   // ---- Simulation: fixed timestep. All rules come from the imported modules. ----
   function simulate(dt) {
     nowMs += dt * 1000;
@@ -246,7 +302,7 @@
     if (keys.KeyD) { mx -= dirY; my += dirX; }   // strafe right
     const len = Math.hypot(mx, my);
     if (len > 0) {
-      const p = moveWithCollision(LEVEL.grid, player.x, player.y,
+      const p = moveWithCollision(dynMap, player.x, player.y,
         (mx / len) * MOVE * dt, (my / len) * MOVE * dt);
       player = { ...player, x: p.x, y: p.y };
     }
@@ -281,13 +337,13 @@
           // shootRay (src/shooting.js) picks WHICH zombie; isHeadshot (src/hitzones.js)
           // judges WHERE on it the crosshair sits — index.html just wires them together.
           const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
-          const target = shootRay(LEVEL.grid, player.x, player.y, ca, sa, zombies);
+          const target = shootRay(dynMap, player.x, player.y, ca, sa, zombies);
           let headshot = false;
           if (target) {
             const tp = projectSprite(player, FOV, W, H, target.zombie);
             if (tp.visible) headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
           }
-          const res = resolveShot(LEVEL.grid, player, zombies, weapon, aimAngle, { headshot });
+          const res = resolveShot(dynMap, player, zombies, weapon, aimAngle, { headshot });
           if (res.hitId != null) {
             // res.hitId names the exact zombie the bullet struck — no hp-diff guessing.
             const hz = res.zombies.find((z) => z.id === res.hitId);
@@ -304,7 +360,7 @@
             hitMarker = 0.12;
           } else {
             // Missed every zombie → the bullet bites a wall; spark where it lands.
-            const wh = castRay(LEVEL.grid, player.x, player.y, ca, sa);
+            const wh = castRay(dynMap, player.x, player.y, ca, sa);
             const d = Math.min(wh.perpWallDist, MAX_VIEW);
             sparks = spawnSpark(sparks, player.x + ca * d, player.y + sa * d);
           }
@@ -369,6 +425,8 @@
     if (muzzleFlash > 0) muzzleFlash -= dt;
     if (hitMarker > 0) hitMarker -= dt;
     if (headshotFlash > 0) headshotFlash -= dt;
+    if (buyMsgT > 0) buyMsgT -= dt;
+    buyTarget = findInteractable(LEVEL, world, player);   // HUD prompt: nearest buyable in reach
     if (isGameOver(player)) endGame();
   }
 
@@ -401,7 +459,7 @@
     for (let x = 0; x < W; x++) {
       const cameraX = (2 * x) / W - 1;
       const rdx = dirX + planeX * cameraX, rdy = dirY + planeY * cameraX;
-      const hit = castRay(LEVEL.grid, player.x, player.y, rdx, rdy);
+      const hit = castRay(dynMap, player.x, player.y, rdx, rdy);
       const dist = Math.max(hit.perpWallDist, 0.0001);
       zbuffer[x] = dist;
 
@@ -606,6 +664,14 @@
       ctx.fillText("HEADSHOT", cx, cy - 16);
       ctx.textAlign = "left";
     }
+    if (buyMsgT > 0) {                          // brief gold confirmation under the reticle
+      const a = Math.min(1, buyMsgT / 1.4);
+      ctx.font = "bold 13px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,213,74," + a.toFixed(3) + ")";
+      ctx.fillText(buyMsg, cx, cy + 34);
+      ctx.textAlign = "left";
+    }
   }
 
   // Faint bar on whichever edge the cursor is steering into, so turning reads clearly.
@@ -641,7 +707,7 @@
     ctx.fillStyle = "#3a5547";
     for (let y = 0; y < LEVEL.H; y++)
       for (let x = 0; x < LEVEL.W; x++) {
-        if (!LEVEL.grid[y][x]) continue;
+        if (!dynMap[y][x]) continue;
         ctx.fillRect(cx + (x + 0.5 - player.x) * s - s / 2,
                      cy + (y + 0.5 - player.y) * s - s / 2, s, s);
       }
@@ -732,6 +798,15 @@
     ammoEl.classList.toggle("empty", a.mag === 0 && !reloading);
     // Classic Nacht has no health bar — the screen edges bleed when you're low.
     lowhpEl.classList.toggle("show", player.hp > 0 && player.hp / player.maxHp < 0.34);
+    // Buy prompt: interact.findInteractable surfaces the nearest in-reach buyable; grey it
+    // out (CSS .poor) when the player can't afford it yet so intent stays readable.
+    if (buyTarget) {
+      buypromptEl.textContent = "Press F — " + buyLabel(buyTarget) + "  [" + buyTarget.cost + "]";
+      buypromptEl.classList.add("show");
+      buypromptEl.classList.toggle("poor", player.points < buyTarget.cost);
+    } else {
+      buypromptEl.classList.remove("show", "poor");
+    }
   }
 
   function frame(t) {
