@@ -460,14 +460,19 @@
           ctx.fillRect(x, top + h * 0.04, 1, h * 0.20);
         }
       }
-      // Glowing eyes when the centre column is visible (and not whited-out by a hit).
+      // Glowing eyes, locked to the head's swaying centre so they never slide off the face.
       const cxi = Math.floor(p.screenX);
       if (!flash && h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
-        ctx.fillStyle = "#f55";
-        const ew = Math.max(1, fullW * 0.06), eh = Math.max(1, h * 0.035);
-        const ey = top + h * 0.10, dx = sway * span;
-        ctx.fillRect(p.screenX - fullW * 0.12 - dx, ey, ew, eh);
-        ctx.fillRect(p.screenX + fullW * 0.06 - dx, ey, ew, eh);
+        const hc = p.screenX + sway * span;          // head centre tracks the same lurch
+        const sep = Math.max(1, fullW * 0.07);       // half the gap between the two eyes
+        const ew = Math.max(1, fullW * 0.05), eh = Math.max(1, h * 0.03);
+        const ey = top + h * 0.12;                   // drop them onto the eye line
+        ctx.fillStyle = "rgba(255,70,45,0.30)";      // dim halo for a sickly glow
+        ctx.fillRect(hc - sep - ew, ey - eh, ew * 2, eh * 3);
+        ctx.fillRect(hc + sep - ew, ey - eh, ew * 2, eh * 3);
+        ctx.fillStyle = "#ff3024";                   // hot pupils, mirrored about the centre
+        ctx.fillRect(hc - sep - ew, ey, ew, eh);
+        ctx.fillRect(hc + sep, ey, ew, eh);
       }
     }
   }
@@ -567,19 +572,59 @@
     }
   }
 
+  // CoD-style radar: a player-centred circular minimap. North is up (the compass
+  // letters are fixed); the yellow triangle and FOV cone show where you're looking.
   function drawMinimap() {
-    const s = 5, ox = W - MAP_W * s - 4, oy = 4;
-    ctx.globalAlpha = 0.8;
+    const R = 30, cx = W - R - 6, cy = R + 6;     // radar centre, tucked top-right
+    const s = 4;                                  // pixels per map cell
+    const half = Math.atan(FOV);                  // FOV half-angle for the look cone
+
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.closePath();
+    ctx.fillStyle = "rgba(6,11,8,0.82)"; ctx.fill();
+    ctx.clip();                                   // everything below is masked to the dish
+
+    // Look cone — a faint wedge in the direction you face.
+    ctx.fillStyle = "rgba(255,225,120,0.10)";
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, R, player.angle - half, player.angle + half); ctx.closePath(); ctx.fill();
+
+    // Walls, drawn relative to the player so the dish scrolls under a fixed centre.
+    ctx.fillStyle = "#3a5547";
     for (let y = 0; y < MAP_H; y++)
       for (let x = 0; x < MAP_W; x++) {
-        ctx.fillStyle = MAP[y][x] ? "#566" : "#111";
-        ctx.fillRect(ox + x * s, oy + y * s, s - 1, s - 1);
+        if (!MAP[y][x]) continue;
+        ctx.fillRect(cx + (x + 0.5 - player.x) * s - s / 2,
+                     cy + (y + 0.5 - player.y) * s - s / 2, s, s);
       }
-    ctx.fillStyle = "#f44";
-    for (const z of zombies) ctx.fillRect(ox + z.x * s - 1, oy + z.y * s - 1, 2, 2);
-    ctx.fillStyle = "#ff5";
-    ctx.fillRect(ox + player.x * s - 1, oy + player.y * s - 1, 2, 2);
-    ctx.globalAlpha = 1;
+
+    // Zombie blips.
+    ctx.fillStyle = "#ff4040";
+    for (const z of zombies) {
+      const bx = cx + (z.x - player.x) * s, by = cy + (z.y - player.y) * s;
+      ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+    }
+    ctx.restore();                                // drop the clip for the overlay chrome
+
+    // Player facing triangle at the centre (angle 0 = +x = East = screen-right).
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(player.angle);
+    ctx.fillStyle = "#ffe14a";
+    ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // Bezel + cardinal compass (north-up, so the letters stay put).
+    ctx.strokeStyle = "rgba(180,200,190,0.55)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.font = "bold 7px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#ffec6a"; ctx.fillText("N", cx, cy - R + 6);
+    ctx.fillStyle = "rgba(220,230,225,0.85)";
+    ctx.fillText("S", cx, cy + R - 6);
+    ctx.fillText("E", cx + R - 5, cy);
+    ctx.fillText("W", cx - R + 5, cy);
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   }
 
   // Blood puffs (red) and wall sparks (gold): world-space points, depth-clipped against
