@@ -123,7 +123,8 @@ Rounds      count(r)      = 2r + 4
 Economy     start 500 · hit +10 · kill +60 · knife +130 · repair board +10
             debris 1000 · Kar98k 200 · Carbine 600 · Thompson 1200 · Box 950
             ammo refill = ½ wall price
-Survival    hp 100 · zombie hit 50 (2 hits to down) · regen to full ~5s after last hit
+Survival    hp 100 · zombie hit 50 (2 hits to down)
+            regen: 2s quiet delay after last hit, then refill to maxHp over 3s (full ~5s after last hit)
 Weapons     data-driven WEAPONS table { damage, rpm, magSize, reserve, reloadMs, auto }
             M1911   dmg 40,  rpm 350, mag 8,  reserve 80,  reload 1500, auto false (start)
             Kar98k  dmg 100, rpm 90,  mag 5,  reserve 50,  reload 2200, auto false (200)
