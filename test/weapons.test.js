@@ -76,6 +76,23 @@ describe("WEAPONS — locked arsenal data", () => {
 });
 
 describe("fire — cadence and magazine state", () => {
+  it("accepts a composed weapon state while canonical player ammo stays id-free", () => {
+    const player = deepFreeze({
+      weapon: "m1911",
+      ammo: { m1911: { mag: 2, reserve: 10 } },
+      reloadTimer: undefined,
+    });
+    const weaponState = { id: player.weapon, ...player.ammo[player.weapon] };
+
+    const result = fire(weaponState, 1000);
+
+    expect(result).toEqual({
+      didFire: true,
+      state: { id: "m1911", mag: 1, reserve: 10, lastShotMs: 1000 },
+    });
+    expect(player.ammo.m1911).toEqual({ mag: 2, reserve: 10 });
+  });
+
   it("fires immediately when ready, spending one round and stamping lastShotMs", () => {
     const weaponState = deepFreeze({ id: "m1911", mag: 2, reserve: 10 });
     const result = fire(weaponState, 1000);
@@ -106,7 +123,7 @@ describe("fire — cadence and magazine state", () => {
 
   it("does not fire an empty magazine or while reloading", () => {
     const empty = deepFreeze({ id: "kar98k", mag: 0, reserve: 5, lastShotMs: 0 });
-    const reloading = deepFreeze({ id: "carbine", mag: 4, reserve: 60, reloadEndMs: 5000 });
+    const reloading = deepFreeze({ id: "carbine", mag: 4, reserve: 60, reloadTimer: 5000 });
 
     expect(fire(empty, 1000)).toEqual({ state: empty, didFire: false });
     expect(fire(reloading, 1000)).toEqual({ state: reloading, didFire: false });
@@ -123,7 +140,7 @@ describe("reload — start and completion timing", () => {
       id: "kar98k",
       mag: 2,
       reserve: 10,
-      reloadEndMs: 2300,
+      reloadTimer: 2300,
     });
     expect(startReload(full, 100)).toEqual(full);
     expect(startReload(dry, 100)).toEqual(dry);
@@ -135,7 +152,7 @@ describe("reload — start and completion timing", () => {
       id: "carbine",
       mag: 12,
       reserve: 2,
-      reloadEndMs: 2800,
+      reloadTimer: 2800,
       lastShotMs: 500,
     });
     const beforeDone = tickReload(reloading, 2799);
@@ -147,13 +164,13 @@ describe("reload — start and completion timing", () => {
       id: "carbine",
       mag: 12,
       reserve: 2,
-      reloadEndMs: 2800,
+      reloadTimer: 2800,
       lastShotMs: 500,
     });
   });
 
   it("uses only the reserve ammo needed to fill the magazine", () => {
-    const reloading = deepFreeze({ id: "thompson", mag: 20, reserve: 240, reloadEndMs: 1000 });
+    const reloading = deepFreeze({ id: "thompson", mag: 20, reserve: 240, reloadTimer: 1000 });
 
     expect(tickReload(reloading, 1000)).toEqual({
       id: "thompson",

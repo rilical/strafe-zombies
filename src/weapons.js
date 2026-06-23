@@ -58,15 +58,15 @@ function fullAmmoFor(id) {
   return { mag: weapon.magSize, reserve: weapon.reserve };
 }
 
-// Attempts one shot from a weapon-state object `{id, mag, reserve, lastShotMs?}`.
-// Returns `{state,didFire}` and never mutates the input state.
+// Attempts one shot from a composed weapon-state object `{id, mag, reserve, ...}`.
+// `player.ammo[id]` stays id-free; callers add `id: player.weapon` at this seam.
 export function fire(weaponState, nowMs) {
   const weapon = weaponFor(weaponState.id);
   const cadenceMs = 60000 / weapon.rpm;
   const coolingDown = weaponState.lastShotMs !== undefined
     && nowMs - weaponState.lastShotMs < cadenceMs;
 
-  if (weaponState.mag <= 0 || weaponState.reloadEndMs !== undefined || coolingDown) {
+  if (weaponState.mag <= 0 || weaponState.reloadTimer !== undefined || coolingDown) {
     return { state: { ...weaponState }, didFire: false };
   }
 
@@ -80,24 +80,24 @@ export function fire(weaponState, nowMs) {
 export function startReload(weaponState, nowMs) {
   const weapon = weaponFor(weaponState.id);
   if (
-    weaponState.reloadEndMs !== undefined
+    weaponState.reloadTimer !== undefined
     || weaponState.mag >= weapon.magSize
     || weaponState.reserve <= 0
   ) {
     return { ...weaponState };
   }
 
-  return { ...weaponState, reloadEndMs: nowMs + weapon.reloadMs };
+  return { ...weaponState, reloadTimer: nowMs + weapon.reloadMs };
 }
 
 // Completes a pending reload once its timer has elapsed, clamping transfer to mag size.
 export function tickReload(weaponState, nowMs) {
   const weapon = weaponFor(weaponState.id);
-  if (weaponState.reloadEndMs === undefined || nowMs < weaponState.reloadEndMs) {
+  if (weaponState.reloadTimer === undefined || nowMs < weaponState.reloadTimer) {
     return { ...weaponState };
   }
 
-  const { reloadEndMs, ...readyState } = weaponState;
+  const { reloadTimer, ...readyState } = weaponState;
   const roundsNeeded = Math.max(0, weapon.magSize - weaponState.mag);
   const roundsLoaded = Math.min(roundsNeeded, weaponState.reserve);
   return {
