@@ -16,17 +16,19 @@ function ownsPerk(player, perkId) {
   return player.perks instanceof Set && player.perks.has(perkId);
 }
 
+function breaksTieBefore(candidate, current) {
+  const categoryDelta = CATEGORY_RANK[candidate.kind] - CATEGORY_RANK[current.kind];
+  if (categoryDelta !== 0) return categoryDelta < 0;
+  return String(candidate.id).localeCompare(String(current.id)) < 0;
+}
+
 function nearerCandidate(current, candidate) {
   if (candidate.dist > INTERACT_RADIUS) return current;
   if (current === null) return candidate;
   if (candidate.dist < current.dist) return candidate;
   if (candidate.dist > current.dist) return current;
 
-  const categoryDelta = CATEGORY_RANK[candidate.kind] - CATEGORY_RANK[current.kind];
-  if (categoryDelta < 0) return candidate;
-  if (categoryDelta > 0) return current;
-
-  return String(candidate.id).localeCompare(String(current.id)) < 0 ? candidate : current;
+  return breaksTieBefore(candidate, current) ? candidate : current;
 }
 
 function nearestDebrisCell(player, cells) {
