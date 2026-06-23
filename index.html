@@ -111,6 +111,7 @@
   import { spawnBloodPuff, spawnSpark, tickParticles } from "./src/particles.js";
   import { buildVoice } from "./src/sfx.js";
   import { addDecal, tickDecals, projectWallDecal, projectFloorDecal } from "./src/decals.js";
+  import { buyableMarkers } from "./src/markers.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -917,6 +918,20 @@
     for (const z of zombies) {
       const bx = cx + (z.x - player.x) * s, by = cy + (z.y - player.y) * s;
       ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+    }
+
+    // Buyable markers: wall guns, the Box, Perk-a-Colas, and the debris door.
+    // markers.js decides which to show (owned perks + opened doors drop out); we
+    // just project their world cells onto the dish and stamp a coloured diamond so
+    // buyables read apart from the square wall cells.
+    const MARKER_COLORS = { mount: "#5ad6ff", box: "#ffd23a", perk: "#54e06a", door: "#ff8a3a" };
+    for (const m of buyableMarkers(LEVEL, world, player)) {
+      const mx = cx + (m.x - player.x) * s, my = cy + (m.y - player.y) * s;
+      ctx.fillStyle = MARKER_COLORS[m.kind] || "#ffffff";
+      ctx.beginPath();
+      ctx.moveTo(mx, my - 2.4); ctx.lineTo(mx + 2.4, my);
+      ctx.lineTo(mx, my + 2.4); ctx.lineTo(mx - 2.4, my);
+      ctx.closePath(); ctx.fill();
     }
     ctx.restore();                                // drop the clip for the overlay chrome
 
