@@ -53,9 +53,11 @@ Every change follows the same loop. It is documented in
 
 1. **Test-first.** Game logic is pure and lives in `src/` modules. A feature starts as
    a failing `vitest` test, then the code that makes it pass.
-2. **Small, frequent PRs.** One concern per PR, small diffs, merged often. Large
-   context degrades both humans and models — we keep each change small enough to hold
-   in your head (and in a model's reliable window).
+2. **Plan by plan, in small PRs.** We are PR-driven — no issue tracker. Each change
+   starts from a short written plan (in the PR description, or `docs/plans/` for bigger
+   work), then lands as one small, single-concern PR. Large context degrades both humans
+   and models — we keep each change small enough to hold in your head (and in a model's
+   reliable window).
 3. **Docs in between.** Each PR updates the docs it touches and explains *what* and
    *why* in its description. The history is a guided tour, not an archaeology dig.
 4. **Seam edits, not rewrites.** We change the minimal region of a file, never
@@ -66,19 +68,21 @@ Every change follows the same loop. It is documented in
 | Path | What it is |
 |---|---|
 | `src/engine.js` | Pure raycasting (DDA) + collision. The testable core. No DOM. |
+| `src/game.js` | Pure gameplay logic (e.g. zombie chase AI). No DOM. |
 | `index.html` | The playable renderer: camera, wall slices, fog, minimap, HUD, input. |
 | `test/` | `vitest` unit tests for the pure logic. |
-| `docs/` | PRD, architecture, and the working agreement. |
-| `.github/` | CI, PR template, issue templates. |
+| `docs/` | PRD, architecture, the working agreement, and `plans/` (one file per plan). |
+| `.github/` | CI workflow and the pull-request template. |
 
 ## Roadmap
 
-The zombies game is built feature by feature. Tracking issues live in the
-[issue tracker](https://github.com/rilical/strafe-zombies/issues); the order is in
-[`docs/prd.md`](docs/prd.md). Early milestones:
+The zombies game is built feature by feature, **plan by plan** — each step is a small,
+self-contained, heavily-documented pull request. We are **PR-driven**: there is no issue
+tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress so far:
 
-- [ ] Render sprites (billboarded zombies) with correct depth vs. walls
-- [ ] Zombie chase AI (pure, tested) + wave spawner
+- [x] Zombie chase AI (`stepZombie`, pure + tested)
+- [ ] Sprite rendering (billboarded zombies) with correct depth vs. walls
+- [ ] Wave spawner
 - [ ] Player health & damage on contact
 - [ ] Shooting (hitscan) and zombie death
 - [ ] Score, waves, and a game-over/restart loop

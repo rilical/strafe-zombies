@@ -4,6 +4,11 @@ How we build in this repo. These rules apply to every contributor — human or A
 They exist because they keep changes reviewable, the history readable, and the project
 shippable at every commit.
 
+We are **PR-driven**: there is no issue tracker. Work proceeds **plan by plan** — each
+change starts from a short written plan and lands as a small, heavily-documented pull
+request. The roadmap lives in [`prd.md`](prd.md); the record of *how* and *why* lives in
+the PRs, the docs, and the code comments. The history is meant to be read.
+
 ## 1. Test-Driven Development
 
 We write the test first.
@@ -19,7 +24,11 @@ rendering, that's a signal the logic should be extracted into `src/`.
 
 Run `npm run test:watch` while you work. No PR merges with a red suite; CI enforces this.
 
-## 2. Small, Frequent Pull Requests
+## 2. Plan by Plan, in Small PRs
+
+We work **one plan at a time**. Before writing code, jot the plan — what we're building,
+why, and the test that will prove it — in the PR description (or a short note in
+[`plans/`](plans/) for anything larger). Then land it as one small PR.
 
 One concern per PR. Prefer a diff you can review in a couple of minutes.
 
@@ -33,14 +42,20 @@ Why this matters beyond tidiness: both reviewers and language models degrade as 
 grows. Small PRs keep the whole change inside the window where review is actually
 reliable. Frequent integration is cheaper than big-bang merges.
 
-## 3. Documentation In Between
+## 3. Documentation Is the Record
 
-Docs are part of the change, not a follow-up.
+We are PR-driven with **no issue tracker**, so the writing *is* the record. Be generous
+with it: the goal is that anyone can read the history — PRs, docs, and comments — and
+understand the project without spelunking.
 
 - Update the docs your PR affects **in the same PR**.
-- The PR description states **what** changed and **why** — link the issue it closes.
-- Keep `docs/prd.md` (the plan) and `docs/architecture.md` (the shape) honest as the
-  code evolves.
+- The PR description opens with the short plan it followed, then states **what** changed
+  and **why**. It is self-contained — no issue numbers to chase.
+- Comment the code for a reader: explain intent and the non-obvious *why*, not the
+  obvious *what*. Every pure function in `src/` gets a doc comment describing its
+  contract (inputs, output, guarantees).
+- Keep [`prd.md`](prd.md) (the roadmap) and [`architecture.md`](architecture.md) (the
+  shape) honest as the code evolves.
 
 ## 4. Seam Edits, Not Rewrites
 
@@ -60,5 +75,6 @@ A change is done when:
 - [ ] New behavior is covered by a test, and `npm test` is green.
 - [ ] The diff is small and focused on one concern.
 - [ ] Affected docs are updated in the same PR.
-- [ ] The PR description explains what and why, and links its issue.
+- [ ] The code is commented for a reader (intent and the non-obvious *why*).
+- [ ] The PR description opens with its short plan and explains what and why.
 - [ ] CI passes.
