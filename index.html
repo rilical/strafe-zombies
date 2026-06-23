@@ -109,6 +109,7 @@
   import { tickShake, shakeOffset } from "./src/shake.js";
   import { spawnPopup, tickPopups } from "./src/popups.js";
   import { spawnBloodPuff, spawnSpark, tickParticles } from "./src/particles.js";
+  import { buildVoice } from "./src/sfx.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -134,6 +135,58 @@
   floorGrad.addColorStop(0, "#20241d"); floorGrad.addColorStop(1, "#0e0f10");
   const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.72);
   vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,0.55)");
+
+  // ---- Procedural audio (WebAudio) ----
+  // src/sfx.js owns the recipes; index.html owns the AudioContext + node scheduling.
+  // buildVoice(name) → { dur, layers:[{ wave, freq:[[t,hz]], gain:[[t,level]] }] }; each layer
+  // becomes one oscillator (or low-pass-filtered white-noise burst) whose pitch + gain follow
+  // the breakpoint curves. The context is created lazily on the first gesture so browsers
+  // allow playback; an unknown preset name is a silent no-op.
+  const SFX_GAIN = 0.32;                 // master mix level for every sound effect
+  let audioCtx = null, noiseBuf = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  function noiseBuffer(ac) {
+    if (!noiseBuf) {
+      const n = (ac.sampleRate * 0.5) | 0, b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+      noiseBuf = b;
+    }
+    return noiseBuf;
+  }
+  function playSfx(name) {
+    const ac = ensureAudio();
+    if (!ac) return;
+    let voice;
+    try { voice = buildVoice(name); } catch { return; }   // unknown preset → silent no-op
+    const t0 = ac.currentTime, end = t0 + voice.dur + 0.02;
+    for (const layer of voice.layers) {
+      const gain = ac.createGain();
+      gain.connect(ac.destination);
+      const gp = layer.gain;
+      gain.gain.setValueAtTime(Math.max(0, gp[0][1]) * SFX_GAIN, t0);
+      for (const [t, level] of gp) gain.gain.linearRampToValueAtTime(Math.max(0, level) * SFX_GAIN, t0 + t);
+      let src, freqParam;
+      if (layer.wave === "noise") {        // white noise through a sweepable low-pass
+        src = ac.createBufferSource(); src.buffer = noiseBuffer(ac); src.loop = true;
+        const lp = ac.createBiquadFilter(); lp.type = "lowpass";
+        freqParam = lp.frequency; src.connect(lp); lp.connect(gain);
+      } else {                              // tonal layer → matching oscillator
+        src = ac.createOscillator(); src.type = layer.wave;
+        freqParam = src.frequency; src.connect(gain);
+      }
+      const fp = layer.freq;
+      freqParam.setValueAtTime(fp[0][1], t0);
+      for (const [t, hz] of fp) freqParam.linearRampToValueAtTime(hz, t0 + t);
+      src.start(t0); src.stop(end);
+    }
+  }
 
   // ---- Tunables (presentation + contact feel; round/level scaling now live in src/) ----
   const FOV = 0.66;            // camera-plane half-width (~66° field of view)
@@ -167,7 +220,7 @@
   let player, zombies, nextZombieId, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
   let world, spawnState, flowField, flowCol, flowRow;   // barrier overlay, rounds SM, BFS field
   let dynMap, buyTarget, buyMsg, buyMsgT;   // live map (opened doors), current buyable, buy cue
-  let powerUps, activePowerUps, nukeFlash;  // floor drops, timed effects, nuke screen-flash cue
+  let powerUps, activePowerUps, nukeFlash, announcedRound;  // floor drops, timed effects, nuke flash, round-howl latch
   let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
@@ -194,7 +247,7 @@
     spawnState = createSpawnState(1);       // rounds.js owns wave pacing + escalation
     flowField = null; flowCol = -1; flowRow = -1;   // forces a field build on frame 1
     buyTarget = null; buyMsg = ""; buyMsgT = 0;     // no buyable in reach, no purchase cue
-    powerUps = []; activePowerUps = {}; nukeFlash = 0;   // no drops, no timers, no nuke flash
+    powerUps = []; activePowerUps = {}; nukeFlash = 0; announcedRound = 0;   // no drops/timers/flash; round 1 will howl
     gameOver = false;
     muzzleFlash = 0;
     hitMarker = 0;
@@ -230,6 +283,7 @@
   let triggerHeld = false, triggerEdge = false;
   canvas.addEventListener("mousedown", (e) => {
     trackCursor(e);
+    ensureAudio();                       // unlock WebAudio on the first user gesture
     if (gameOver) { reset(); return; }
     triggerHeld = true; triggerEdge = true;
   });
@@ -256,7 +310,9 @@
   const perkRpm = () => effectiveRpm(player, WEAPONS[player.weapon].rpm);
   const perkReloadMs = () => effectiveReloadMs(player, WEAPONS[player.weapon].reloadMs);
   function tryStartReload() {
+    const wasReloading = player.reloadTimer !== undefined;
     writeWeapon(startReload(composeWeapon(), nowMs, { reloadMs: perkReloadMs() }));
+    if (!wasReloading && player.reloadTimer !== undefined) playSfx("reload");  // only on a fresh reload
   }
 
   // ---- Buying (input glue) ----
@@ -265,9 +321,10 @@
   // opens the door. No buy rules live here — index.html only sequences the pure calls.
   function tryBuy() {
     const it = findInteractable(LEVEL, world, player);
-    if (!it || player.points < it.cost) return;
+    if (!it) return;                                  // nothing in reach — stay silent
+    if (player.points < it.cost) { playSfx("deny"); return; }   // in reach but can't afford
     const paid = spend(player, it.cost);
-    if (!paid.ok) return;
+    if (!paid.ok) { playSfx("deny"); return; }
     player = paid.player;
     if (it.kind === "mount") {
       player = buyWallWeapon(player, it.weaponId);          // grant + equip at full ammo
@@ -288,6 +345,7 @@
       flowField = null;                                     // force a flow-field rebuild
       flashBuy("DOOR OPEN");
     }
+    playSfx(it.kind === "debris" ? "door" : "buy");          // purchase confirm (rumble for doors)
   }
   function flashBuy(text) { buyMsg = text; buyMsgT = 1.4; }   // brief centred confirmation cue
 
@@ -344,10 +402,12 @@
       const ws = composeWeapon();
       if (ws.mag === 0 && ws.reloadTimer === undefined) {
         writeWeapon(startReload(ws, nowMs, { reloadMs: perkReloadMs() })); // empty → auto-reload
+        if (player.reloadTimer !== undefined) playSfx("reload");
       } else {
         const { state, didFire } = fireWeapon(ws, nowMs, { rpm: perkRpm() });
         if (didFire) {
           writeWeapon(state);
+          playSfx("shoot");
           muzzleFlash = 0.05;
           recoil = 1;                             // weapon kick + crosshair bloom
           trauma = Math.min(1, trauma + 0.16);    // every shot kicks the camera a little
@@ -388,6 +448,8 @@
             if (res.headshot) headshotFlash = 0.6;   // gold crosshair X + "HEADSHOT" cue
             player = earn(player, gained);
             hitMarker = 0.12;
+            // One marker sound, prioritised kill > headshot > body-hit.
+            playSfx(res.killedId != null ? "kill" : (res.headshot ? "headshot" : "hit"));
           } else {
             // Missed every zombie → the bullet bites a wall; spark where it lands.
             const wh = castRay(dynMap, player.x, player.y, ca, sa);
@@ -417,6 +479,7 @@
         player = applyContactDamage(player, CONTACT_DAMAGE, nowMs);
         zombies[i] = { ...z, hitCooldown: HIT_COOLDOWN_MS };
         trauma = Math.min(1, trauma + 0.5);          // getting clawed shakes hard
+        playSfx("hurt");
       }
     }
 
@@ -427,6 +490,10 @@
     // only feeds the live zombie count back in and reacts to the phase transitions:
     //   spawning → (all spawned) waiting → (all killed) intermission → (timer) next round.
     spawnState = { ...spawnState, alive: zombies.length };
+    if (spawnState.phase === "spawning" && spawnState.round !== announcedRound) {
+      announcedRound = spawnState.round;             // one tension sting at the top of each round
+      playSfx("roundstart");
+    }
     if (spawnState.phase === "spawning") {
       const tick = tickSpawner(spawnState, dt);
       spawnState = tick.state;
@@ -436,6 +503,7 @@
                        hp: zombieHealthForRound(spawnState.round),
                        speed: zombieSpeedForRound(spawnState.round),
                        state: "chase", hitCooldown: 0 });
+        playSfx("groan");                            // a fresh shambler groans in (pitch varies)
       }
       if (spawnState.toSpawn === 0) spawnState = advanceRound(spawnState);  // → waiting
     } else if (spawnState.phase === "waiting") {
@@ -451,12 +519,13 @@
     const keptDrops = [];
     for (const d of powerUps) {
       if (Math.hypot(d.x - player.x, d.y - player.y) > PICKUP_RANGE) { keptDrops.push(d); continue; }
+      playSfx("powerup");                            // pickup chime for any collected drop
       if (d.type === "nuke") {
         for (const z of zombies) corpses.push({ x: z.x, y: z.y, bornMs: nowMs }); // bodies drop
         const nk = applyNuke(zombies);                  // clears the living, awards a flat bonus
         zombies = nk.zombies;
         player = earn(player, nk.points * (activePowerUps.doublePoints > 0 ? 2 : 1));
-        nukeFlash = 1; trauma = Math.min(1, trauma + 0.4); flashBuy("NUKE");
+        nukeFlash = 1; trauma = Math.min(1, trauma + 0.4); flashBuy("NUKE"); playSfx("nuke");
       } else if (d.type === "maxAmmo") {
         player = applyMaxAmmo(player); flashBuy("MAX AMMO");
       } else if (d.type === "instaKill") {
