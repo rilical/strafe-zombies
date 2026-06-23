@@ -1,6 +1,6 @@
 # 0004 — Game juice + visual polish pass
 
-**Status:** in progress · **Branch:** `rilical-zombies-game-design` (trunk; integration agent)
+**Status:** complete · **Branch:** `rilical-zombies-game-design` (trunk; integration agent)
 
 ## What / why
 
