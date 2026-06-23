@@ -101,6 +101,24 @@ player walks within `PICKUP_RANGE`, routing it to the helper above. Insta-Kill o
 shot's damage so any hit is lethal; Double Points doubles every award; drops render as hovering
 colour-coded diamonds and active timers tick down in the HUD.
 
+### Juice — `shake.js`, `popups.js`, `particles.js`, `decals.js`, `sfx.js`
+Presentation-only modules; each is pure and unit-tested, and `index.html` owns the canvas /
+WebAudio side-effects:
+- `shake.js` / `popups.js` / `particles.js` — screen-shake trauma, floating +N score popups,
+  and blood/spark puffs.
+- `decals.js` — persistent marks: `addDecal(list, decal, cap)` keeps a capped list,
+  `tickDecals(list, dt)` ages them (a `fade` for finite `ttl`, culling the expired), and
+  `projectWallDecal`/`projectFloorDecal(player, FOV, W, H, decal)` map a world point to screen
+  space using the same camera transform as `sprites.js`. `index.html` drops a permanent bullet
+  hole where a shot bites a wall and a 12s blood pool on a kill, then paints them depth-clipped
+  against the wall buffer (between the wall cast and the actors).
+- `sfx.js` — frozen `SFX` recipe table + `buildVoice(name, rng)` → a schedulable
+  `{ dur, layers:[{ wave, freq:[[t,hz]], gain:[[t,level]] }] }` plan (with `adsr` envelope
+  helper). `index.html` owns a lazily-created `AudioContext` and a `playSfx(name)` that turns
+  each layer into an oscillator (or low-pass-filtered white noise) following the breakpoint
+  curves, called at the shoot/reload/hit/headshot/kill/buy/deny/door/hurt/groan/roundstart/
+  powerup/nuke seams. No audio files — every voice is synthesised live.
+
 ### `index.html`
 - Owns player state, the input map, the rAF loop, and all drawing.
 - Calls only pure functions from `src/`; holds no game *rules* itself beyond wiring.

@@ -87,6 +87,13 @@ tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress
 - [x] Player health & damage on contact
 - [x] Shooting (hitscan) and zombie death
 - [x] Score, waves, and a game-over/restart loop
+- [x] The Nacht-style 4-room map (`level.js`) with debris doors + boarded windows (`barriers.js`)
+- [x] Buying: wall-buy guns, the Mystery Box, and Perk-a-Colas (`economy`/`weapons`/`perks`/`interact`)
+- [x] Perk effects — Juggernog (health), Speed Cola (reload), Double Tap (fire rate)
+- [x] Power-ups — Nuke / Max Ammo / Insta-Kill / Double Points drops (`powerups.js`)
+- [x] Headshots, screen-shake, score popups, blood/spark particles
+- [x] Persistent decals — bullet holes on walls + blood pools on the floor (`decals.js`)
+- [x] Fully procedural sound — synthesised live in WebAudio, no audio files (`sfx.js`)
 
 ## License
 
