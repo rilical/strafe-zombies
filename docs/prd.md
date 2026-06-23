@@ -26,7 +26,7 @@ The full v1 design and PR-by-PR build order live in
 
 ## Core features (in deployment order)
 
-This is the high-level arc; the authoritative PR-by-PR sequence (14 steps) lives in
+This is the high-level arc; the authoritative PR-by-PR sequence (15 steps) lives in
 [`0002-zombies-survival.md`](plans/0002-zombies-survival.md). We are PR-driven with no issue
 tracker, so that plan *is* the roadmap. Each step is a small, documented PR, test-first where
 it touches `src/`.
@@ -45,7 +45,9 @@ it touches `src/`.
    buyable debris that opens the building.
 9. **Wall guns + Mystery Box** — wall-buys, ammo/reload, the 950 Box.
 10. **Power-ups** — Nuke / Max Ammo / Insta-Kill / Double Points drops.
-11. **Textured rendering + decals** — framebuffer, textured walls, floor casting, then
+11. **Perks** — three buyable Perk-a-Colas: Juggernog (health), Speed Cola (reload), Double
+    Tap (fire rate). Pure stat multipliers; no downed/revive state.
+12. **Textured rendering + decals** — framebuffer, textured walls, floor casting, then
     persistent bullet-hole and blood-pool decals. Capstone renderer work.
 
 ## Non-goals (explicitly out of scope)
@@ -62,8 +64,10 @@ Listing these is how we kill scope creep:
 - **No level editor or multiple levels** — one hand-authored map (the Nacht loop).
 - **No build tooling / framework / bundler.** Vanilla ES modules only.
 - **No mobile/touch controls** for the first version.
-- **No headshots, perks, Pack-a-Punch, or shotgun penetration** in v1 — see the plan's
-  deferred list (headshots need vertical aim; Nacht itself shipped with no perks).
+- **No headshots, Pack-a-Punch, or shotgun penetration** in v1 — see the plan's deferred
+  list (headshots need vertical aim). **Perks are partly in:** the three stat Perk-a-Colas
+  (Juggernog / Speed Cola / Double Tap) ship; **Quick Revive and the downed/revive state do
+  not** — going down stays instant game-over.
 
 ## Success criteria
 

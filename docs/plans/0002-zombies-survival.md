@@ -15,8 +15,8 @@ rather than rewriting history.
 Turn the STRAFE raycaster baseplate into a faithful-but-simple **Call of Duty "Nacht der
 Untoten"** survival game: you spawn in a sealed building, **buy wall guns and open debris
 doors with points**, **run laps to train the horde**, and **shoot escalating rounds of
-zombies** until you go down. Authentic round math, a Mystery Box, and the classic power-up
-drops are in; the build stays vanilla ES modules, zero runtime deps, test-first.
+zombies** until you go down. Authentic round math, a Mystery Box, the classic power-up
+drops, and three stat Perk-a-Colas are in; the build stays vanilla ES modules, zero runtime deps, test-first.
 
 ## Success criteria
 
@@ -34,14 +34,15 @@ These were settled during brainstorming and are the contract for the build:
 
 | Area | Decision |
 |---|---|
-| **Scope (v1)** | Faithful floor + wall guns + debris doors + boarded windows + rounds + points + health/game-over + **Mystery Box** + **power-ups** (Nuke / Max Ammo / Insta-Kill / Double Points). |
+| **Scope (v1)** | Faithful floor + wall guns + debris doors + boarded windows + rounds + points + health/game-over + **Mystery Box** + **power-ups** (Nuke / Max Ammo / Insta-Kill / Double Points) + **3 stat perks** (Juggernog / Speed Cola / Double Tap). |
 | **Controls** | **Pointer-lock mouse-look** to aim, **hold-mouse to fire**, **WASD** move (A/D strafe, W/S forward-back), **R** reload, **F** buy when prompted, **1–3 / wheel** swap weapons. |
-| **Map** | **Faithful loop**: 4 connected rooms around a solid central core; buyable debris (1000) opens the building into a runnable lap; 6 boarded windows; 3 wall-gun mounts; 1 Box. |
+| **Map** | **Faithful loop**: 4 connected rooms around a solid central core; buyable debris (1000) opens the building into a runnable lap; 6 boarded windows; 3 wall-gun mounts; 1 Box; 3 Perk-a-Cola machines. |
 | **Difficulty** | **Faithful CoD math** (authentic counts/HP/speed/cadence). The survival model's ~5s regen keeps it fair. A difficulty toggle can come later. |
 | **Architecture** | **Per-system pure modules** in `src/`, orchestrated by a thin `index.html`. New system = new file + ~one wiring line. No mega-reducer (trivial to add later if wanted). |
 | **HUD** | **Classic Nacht**: points top-left, glowing round counter bottom-right, ammo above it, **no health bar** — damage shows as the red screen-edge vignette. |
 | **Decals** | **Full**: persistent **wall bullet holes + floor blood pools**, which requires a **textured rendering pipeline** (framebuffer + textured walls + floor casting). Transient blood puffs/screen-splatter ship earlier. |
 | **Audio** | **Fully procedural** WebAudio (zero asset files): per-weapon shots, spatialised zombie groans, impacts, reload, round howl, purchase, power-up stings. |
+| **Perks** | **Three stat Perk-a-Colas** as buyable machines: **Juggernog** (max HP 100→250), **Speed Cola** (½ reload), **Double Tap** (~1.33× fire rate). Deliberately *series*-faithful, not Nacht-canonical (perks debuted on Verrückt). **Quick Revive / downed state is out** — going down stays instant game-over. |
 
 ---
 
@@ -60,6 +61,7 @@ These were settled during brainstorming and are the contract for the build:
 | `weapons.js` *(new)* | `WEAPONS` data + ammo/reload state. `fire(weaponState,nowMs)`, `startReload`, `tickReload`, `refillAmmo`, `buyWallWeapon(player,id)`, `rollMysteryBox(player,rng)`. |
 | `shooting.js` *(new)* | Hitscan hit detection. `shootRay(map,px,py,dx,dy,zombies,opts)→{zombie,t}\|null`, `fireWeapon`, `resolveShot(map,player,zombies,weapon)→{zombies,scoreDelta}`, `applyDamage`, `scoreForHit`. |
 | `survival.js` *(new)* | `applyContactDamage(player,dmg,nowMs)`, `regen(player,nowMs)`, `isGameOver(player)`. HP 100; per-zombie attack cooldown; ~5s regen-to-full. |
+| `perks.js` *(new)* | Perk-a-Cola data + effects. `PERKS` `{id,cost}`, `grantPerk(player,id)`, `hasPerk(player,id)`, and pure multipliers `effectiveMaxHp(player)`, `effectiveReloadMs(player,base)`, `effectiveRpm(player,base)`. Owns the perk IDs; `survival`/`weapons` consume effective values. |
 | `powerups.js` *(new)* | `maybeDrop(zombie,rng)→drop\|null`, `tickPowerUps(state,dt)`, effect helpers: Nuke (kill-all + points), Max Ammo, Insta-Kill timer, Double-Points timer. |
 | `sprites.js` *(new)* | Billboard projection. Extends 0001's `projectSprite` to `projectSprites(player,FOV,W,H,sprites)→sorted[]` (back-to-front, per-column depth-clipped). |
 | `particles.js` *(new)* | Transient effects. `spawnBloodPuff(list,x,y)`, `spawnSpark`, `tickParticles(list,dt)`. |
@@ -74,7 +76,7 @@ test updated (seam edit, not a dangling export).
 
 ```
 player:   { x, y, angle, hp, maxHp, points, weapon, ammo:{ [id]:{mag,reserve} },
-            shootCooldown, reloadTimer, lastDamageMs }
+            shootCooldown, reloadTimer, lastDamageMs, perks:Set<id> }
 zombies:  [ { id, x, y, angle, hp, speed, state, hitCooldown, spawnWindow } ]
 round:    { round, phase:'intermission'|'spawning'|'waiting',
             zombiesToSpawn, aliveCount, spawnTimer, roundTimer }
@@ -128,6 +130,8 @@ Weapons     data-driven WEAPONS table { damage, rpm, magSize, reserve, reloadMs,
             Carbine dmg 50,  rpm 360, mag 15, reserve 120, reload 1800, auto false (600)
             Thompson dmg 35, rpm 700, mag 30, reserve 240, reload 2400, auto true  (1200)
             range 20 (rifles longer) · headshots deferred → kills are flat +60
+Perks       Juggernog 2500 → maxHp 100→250 · Speed Cola 3000 → reloadMs ×0.5
+            Double Tap 2000 → rpm ×1.33 (faster fire) · effects are pure multipliers
 Power-ups   drop chance ~3% on kill · drop ttl ~15s · Insta-Kill 30s · Double Points 30s
             Nuke = kill all alive + 400 pts
 Juice       screen shake 0.25 trauma/shot, maxPx 4–6 (canvas-space)
@@ -169,12 +173,16 @@ where it touches `src/`.
     reload; wall-buy prompts + purchase "cha-ching". *Test:* buy/own/refill/box-roll logic.
 11. **Power-ups** — `powerups.js` Nuke / Max Ammo / Insta-Kill / Double Points; drops,
     proximity pickup, timers, stings. *Test:* `maybeDrop`, effect helpers, `tickPowerUps`.
-12. **Textured rendering pipeline** — `index.html`: `Uint32Array` framebuffer (ImageData),
+12. **Perks (Perk-a-Cola)** — `perks.js`: Juggernog / Speed Cola / Double Tap as buyable
+    machines via `economy.spend`; `survival` reads `effectiveMaxHp`, `weapons` read
+    `effectiveReloadMs` / `effectiveRpm`; perk jingle + bottle-buy SFX. *Test:* `grantPerk`
+    immutability, `hasPerk`, each effective-stat multiplier, can't-rebuy / insufficient-points.
+13. **Textured rendering pipeline** — `index.html`: `Uint32Array` framebuffer (ImageData),
     textured walls, floor casting. The perf upgrade the research anticipated. *(Projection
     math that needs testing lives in `sprites.js`/`decals.js`.)*
-13. **Persistent decals** — `decals.js` wall bullet holes + floor blood pools, capped/pooled.
+14. **Persistent decals** — `decals.js` wall bullet holes + floor blood pools, capped/pooled.
     *Test:* world→screen projection, eviction/cap, depth-clip vs walls.
-14. **Polish** — remaining spatialised SFX (groans, impacts), low-HP heartbeat pulse,
+15. **Polish** — remaining spatialised SFX (groans, impacts), low-HP heartbeat pulse,
     blood-puff tuning, optional adaptive ambient drone.
 
 ---
@@ -196,8 +204,11 @@ with its Plan + what/why.
 ## Non-goals / deferred (kills scope creep)
 
 - **Headshots** — needs vertical aim/pitch (none yet); kills are flat +60. Revisit with pitch.
-- **Perks (Perk-a-Cola)** — Nacht shipped with none; faithful to omit. Architecture leaves a
-  `player.perks` seam (callers compute multipliers; pure fns never reference perk IDs).
+- **Quick Revive & the downed state** — the three *stat* perks (Juggernog / Speed Cola /
+  Double Tap) are **in** v1; Quick Revive is **not**, because solo Quick Revive needs a
+  down-and-self-revive state. Going down stays instant game-over. (`player.perks` is a `Set`;
+  `perks.js` owns the IDs and exposes pure multipliers — `survival`/`weapons` consume the
+  effective values, never perk IDs.)
 - **Pack-a-Punch, shotgun pellets/penetration, damage falloff, random spread** — later tiers.
 - **No asset files** — every texture/sprite/sound is generated procedurally in code.
 - **No networking/multiplayer, no mobile/touch, no bundler/framework, no second level.**
@@ -208,4 +219,5 @@ Update `docs/prd.md` so the roadmap matches this pivot: core mechanic becomes *s
 escalating rounds by circle-strafing, buying, and shooting*; controls note mouse-look + WASD;
 the feature list points here; non-goals updated (procedural audio is now **in**, flow-field
 nav is now **in**, procedural textures/floor-casting now **in** — all still asset-free; A*,
-WAD/BSP, networking, mobile, bundler, multi-level stay **out**).
+WAD/BSP, networking, mobile, bundler, multi-level stay **out**). The three stat perks are now
+**in** (Quick Revive / downed state stays out).
