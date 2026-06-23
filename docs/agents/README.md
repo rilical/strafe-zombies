@@ -66,7 +66,7 @@ All world units are **map cells**; entity positions are floats; a cell `(cx,cy)`
 
 ```js
 player = { x, y, angle, hp, maxHp, points, weapon, ammo:{ [id]:{ mag, reserve } },
-           shootCooldown, reloadTimer, lastDamageMs, perks /* Set<string> */ }
+           lastShotMs, reloadTimer, lastDamageMs, perks /* Set<string> */ }
 zombie = { id, x, y, angle, hp, speed, state, hitCooldown, spawnWindow }
 round  = { round, phase /* 'intermission'|'spawning'|'waiting' */,
            zombiesToSpawn, aliveCount, spawnTimer, roundTimer }
@@ -78,6 +78,14 @@ activePowerUps = { instaKill /* sec */, doublePoints /* sec */ }
 `player.maxHp` is authoritative for `survival`; `perks.effectiveMaxHp` derives it and the
 integration agent keeps `player.maxHp` in sync when a perk is bought. Pure functions are
 **immutable** — return new objects/arrays, never mutate inputs.
+
+**Weapon-state composition seam.** `weapons.fire/startReload/tickReload/refillAmmo` operate on
+a *composed weapon state* `{ id, mag, reserve, reloadTimer?, lastShotMs? }`, not the player.
+Integration composes it from `{ id: player.weapon, ...player.ammo[player.weapon],
+reloadTimer: player.reloadTimer, lastShotMs: player.lastShotMs }`, then writes back the
+returned `{ mag, reserve }` into `player.ammo[id]` plus top-level `reloadTimer`/`lastShotMs`.
+`reloadTimer` is an absolute completion timestamp (`nowMs + reloadMs`); `undefined` means not
+reloading. `weapons.buyWallWeapon/rollMysteryBox` take and return the whole `player`.
 
 ### Level data shape (`level.js` must conform; `barriers`/`pathfind` code against it)
 

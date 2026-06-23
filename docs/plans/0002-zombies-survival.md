@@ -76,7 +76,7 @@ test updated (seam edit, not a dangling export).
 
 ```
 player:   { x, y, angle, hp, maxHp, points, weapon, ammo:{ [id]:{mag,reserve} },
-            shootCooldown, reloadTimer, lastDamageMs, perks:Set<id> }
+            lastShotMs, reloadTimer, lastDamageMs, perks:Set<id> }
 zombies:  [ { id, x, y, angle, hp, speed, state, hitCooldown, spawnWindow } ]
 round:    { round, phase:'intermission'|'spawning'|'waiting',
             zombiesToSpawn, aliveCount, spawnTimer, roundTimer }
