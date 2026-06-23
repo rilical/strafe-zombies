@@ -68,7 +68,7 @@ Every change follows the same loop. It is documented in
 | Path | What it is |
 |---|---|
 | `src/engine.js` | Pure raycasting (DDA) + collision. The testable core. No DOM. |
-| `src/game.js` | Pure gameplay logic (e.g. zombie chase AI). No DOM. |
+| `src/*.js` | Pure game systems — `level`, `barriers`, `rounds`, `pathfind`, `shooting`, `survival`, `economy`, `weapons`, `sprites`, … Unit-tested, no DOM. |
 | `index.html` | The playable renderer: camera, wall slices, fog, minimap, HUD, input. |
 | `test/` | `vitest` unit tests for the pure logic. |
 | `docs/` | PRD, architecture, the working agreement, and `plans/` (one file per plan). |
@@ -80,12 +80,12 @@ The zombies game is built feature by feature, **plan by plan** — each step is 
 self-contained, heavily-documented pull request. We are **PR-driven**: there is no issue
 tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress so far:
 
-- [x] Zombie chase AI (`stepZombie`, pure + tested)
-- [ ] Sprite rendering (billboarded zombies) with correct depth vs. walls
-- [ ] Wave spawner
-- [ ] Player health & damage on contact
-- [ ] Shooting (hitscan) and zombie death
-- [ ] Score, waves, and a game-over/restart loop
+- [x] Zombie navigation (flow-field, `pathfind.js`, pure + tested — supersedes `stepZombie`)
+- [x] Sprite rendering (billboarded zombies) with correct depth vs. walls
+- [x] Wave spawner (faithful round escalation, `rounds.js` + window spawns)
+- [x] Player health & damage on contact
+- [x] Shooting (hitscan) and zombie death
+- [x] Score, waves, and a game-over/restart loop
 
 ## License
 

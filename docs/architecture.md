@@ -17,9 +17,10 @@ glue is thin and lives in `index.html`.** Anything you'd want to unit-test belon
 ┌─────────────────────────────────────────────────────────┐
 │ src/ — pure, dependency-free, unit-tested                 │
 │                                                           │
-│  engine.js   MAP, castRay (DDA), collision, walkability   │
-│  game.js*    stepZombie, spawnWave, damage, hitscan ...    │
-│  (* added feature by feature, each test-first)            │
+│  engine.js   castRay (DDA), collision, walkability        │
+│  level.js · barriers.js   map data, doors & windows       │
+│  rounds.js · pathfind.js   wave pacing, flow-field nav    │
+│  shooting · survival · economy · weapons · sprites · …    │
 └─────────────────────────────────────────────────────────┘
                 ▲
                 │ imported by
@@ -41,18 +42,28 @@ glue is thin and lives in `index.html`.** Anything you'd want to unit-test belon
 ## Current modules
 
 ### `src/engine.js`
-- `MAP`, `MAP_W`, `MAP_H` — the level grid (0 = empty, 1/2/3 = wall types).
+- `MAP`, `MAP_W`, `MAP_H` — the original demo grid. The **playable Nacht map now lives in
+  `src/level.js`** as `LEVEL` (see below); `index.html` renders and collides against
+  `LEVEL.grid`, while `engine.MAP` remains only as a small standalone fixture.
 - `wallAt(map, x, y)` — wall lookup; out-of-bounds is solid.
 - `castRay(map, posX, posY, rayDirX, rayDirY)` — DDA raycast returning
   `{ perpWallDist, side, mapX, mapY, wall }`. `perpWallDist` is perpendicular to avoid
   fisheye.
 - `isWalkable`, `moveWithCollision` — per-axis collision so entities slide along walls.
 
-### `src/game.js`
-- `stepZombie(map, zombie, target, dt, speed)` — advances one zombie toward the target
-  by `speed * dt` units, sliding along walls via `moveWithCollision`. Pure: returns a new
-  entity and never mutates its input. This is the seed of the chase AI; future gameplay
-  (spawning, damage, shooting) lands here as more pure, tested functions.
+### `src/level.js`, `src/barriers.js`, `src/rounds.js`, `src/pathfind.js`
+The Nacht survival systems, each pure and unit-tested (frozen contracts in
+[`agents/`](agents/)):
+- `level.js` — `LEVEL`: the 16×16 four-room loop map (grid, spawn, windows, wall-gun
+  mounts, debris doors, the Mystery Box, perk machines) plus `cellAt`.
+- `barriers.js` — the mutable world overlay: `createWorld`, `openDoor`, board repair/tear,
+  and `isBlocked(level, world, cx, cy)` (a bought debris door overrides its solid-rubble
+  grid value and becomes passable).
+- `rounds.js` — faithful escalation math (`zombiesForRound`/HP/speed/cadence/cap) and the
+  spawn state machine (`createSpawnState` → `tickSpawner` → `advanceRound`).
+- `pathfind.js` — a BFS **flow field** (`buildFlowField`, `flowDir`, `stepZombieAlong`) the
+  zombies follow around the core. This **supersedes the original straight-line `stepZombie`**
+  (the retired `src/game.js`); `index.html` rebuilds the field when the player changes cell.
 
 ### `index.html`
 - Owns player state, the input map, the rAF loop, and all drawing.

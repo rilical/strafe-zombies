@@ -76,8 +76,12 @@
   // damage, scoring, projection) lives in the unit-tested pure modules in src/.
   // This file only wires those functions to the canvas and keyboard/mouse.
   // ---------------------------------------------------------------------------
-  import { MAP, MAP_W, MAP_H, castRay, moveWithCollision } from "./src/engine.js";
-  import { stepZombie } from "./src/game.js";
+  import { castRay, moveWithCollision } from "./src/engine.js";
+  import { LEVEL } from "./src/level.js";
+  import { createWorld, isBlocked } from "./src/barriers.js";
+  import { createSpawnState, tickSpawner, advanceRound,
+           zombieHealthForRound, zombieSpeedForRound } from "./src/rounds.js";
+  import { buildFlowField, stepZombieAlong } from "./src/pathfind.js";
   import { WEAPONS, fire as fireWeapon, startReload, tickReload } from "./src/weapons.js";
   import { resolveShot, shootRay } from "./src/shooting.js";
   import { isHeadshot } from "./src/hitzones.js";
@@ -109,7 +113,7 @@
   const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.72);
   vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,0.55)");
 
-  // ---- Tunables (MVP integration config; round/level scaling arrives with those modules) ----
+  // ---- Tunables (presentation + contact feel; round/level scaling now live in src/) ----
   const FOV = 0.66;            // camera-plane half-width (~66° field of view)
   const MOVE = 2.8;            // player units / second
   const TURN = 2.6;            // arrow-key turn radians / second (mouse edge-zones also turn)
@@ -119,24 +123,26 @@
   const MAX_SHAKE_PX = 5;      // peak screen-shake translation (px) at full trauma
   const CORPSE_MS = 700;       // how long a slain zombie's body fades on the floor
 
-  const ZOMBIE_HP = 150;       // MVP placeholder until rounds.js scales HP per round
-  const ZOMBIE_SPEED = 1.15;   // map cells / second (slower than the player, so you can kite)
-  const CONTACT_RANGE = 0.6;   // how close a zombie must be to claw you
+  const CONTACT_RANGE = 1.0;   // a zombie that reaches your cell claws you (the flow field
+                               //   navigates at cell granularity, so this is ~one cell)
   const CONTACT_DAMAGE = 50;   // spec: two claws down a 100-HP player (survival owns the math)
   const HIT_COOLDOWN_MS = 750; // per-zombie delay between claws
-  const SPAWN_POINTS = [
-    { x: 13.5, y: 1.5 }, { x: 13.5, y: 13.5 }, { x: 1.5, y: 10.5 },
-    { x: 8.5, y: 13.5 }, { x: 5.5, y: 13.5 },
-  ];
-  const MAX_ALIVE = 5;
-  const SPAWN_INTERVAL = 2.2;  // seconds between spawns while under the cap
 
-  const WALL_COLORS = [null, [176, 58, 58], [70, 120, 70], [70, 100, 150]];
+  // Zombies enter at the boarded windows: each spawns just inside the window, on the
+  // walkable interior cell it faces. Every room is reachable from the spawn, so the
+  // flow field can train a zombie from any window straight to the player.
+  const SPAWN_CELLS = LEVEL.windows.map((w) => ({
+    x: w.cx + w.faceX + 0.5, y: w.cy + w.faceY + 0.5,
+  }));
+
+  // Wall tints by grid value: 1 = Nacht brick, 2 = heavy stone core, 3 = debris rubble.
+  const WALL_COLORS = [null, [176, 58, 58], [104, 102, 116], [120, 86, 52]];
   const FOG = [16, 20, 16];     // distant walls fade toward this sickly tone, not black
   const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
 
   // ---- Mutable game state (player matches the frozen GameState contract) ----
-  let player, zombies, nextZombieId, spawnTimer, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
+  let player, zombies, nextZombieId, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
+  let world, spawnState, flowField, flowCol, flowRow;   // barrier overlay, rounds SM, BFS field
   let trauma, popups, blood, sparks;   // game-juice state: screen shake, +N popups, particles
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
@@ -145,7 +151,7 @@
   function freshPlayer() {
     const w = WEAPONS.m1911;
     return {
-      x: 2.5, y: 2.5, angle: 0.4,
+      x: LEVEL.spawn.x, y: LEVEL.spawn.y, angle: LEVEL.spawn.angle,
       hp: 100, maxHp: 100, points: 500,
       weapon: "m1911",
       ammo: { m1911: { mag: w.magSize, reserve: w.reserve } },
@@ -158,7 +164,9 @@
     player = freshPlayer();
     zombies = [];
     nextZombieId = 1;
-    spawnTimer = 0.5;
+    world = createWorld(LEVEL);             // mutable barrier overlay (doors/boards)
+    spawnState = createSpawnState(1);       // rounds.js owns wave pacing + escalation
+    flowField = null; flowCol = -1; flowRow = -1;   // forces a field build on frame 1
     gameOver = false;
     muzzleFlash = 0;
     hitMarker = 0;
@@ -238,7 +246,7 @@
     if (keys.KeyD) { mx -= dirY; my += dirX; }   // strafe right
     const len = Math.hypot(mx, my);
     if (len > 0) {
-      const p = moveWithCollision(MAP, player.x, player.y,
+      const p = moveWithCollision(LEVEL.grid, player.x, player.y,
         (mx / len) * MOVE * dt, (my / len) * MOVE * dt);
       player = { ...player, x: p.x, y: p.y };
     }
@@ -273,13 +281,13 @@
           // shootRay (src/shooting.js) picks WHICH zombie; isHeadshot (src/hitzones.js)
           // judges WHERE on it the crosshair sits — index.html just wires them together.
           const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
-          const target = shootRay(MAP, player.x, player.y, ca, sa, zombies);
+          const target = shootRay(LEVEL.grid, player.x, player.y, ca, sa, zombies);
           let headshot = false;
           if (target) {
             const tp = projectSprite(player, FOV, W, H, target.zombie);
             if (tp.visible) headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
           }
-          const res = resolveShot(MAP, player, zombies, weapon, aimAngle, { headshot });
+          const res = resolveShot(LEVEL.grid, player, zombies, weapon, aimAngle, { headshot });
           if (res.hitId != null) {
             // res.hitId names the exact zombie the bullet struck — no hp-diff guessing.
             const hz = res.zombies.find((z) => z.id === res.hitId);
@@ -296,7 +304,7 @@
             hitMarker = 0.12;
           } else {
             // Missed every zombie → the bullet bites a wall; spark where it lands.
-            const wh = castRay(MAP, player.x, player.y, ca, sa);
+            const wh = castRay(LEVEL.grid, player.x, player.y, ca, sa);
             const d = Math.min(wh.perpWallDist, MAX_VIEW);
             sparks = spawnSpark(sparks, player.x + ca * d, player.y + sa * d);
           }
@@ -305,9 +313,16 @@
       }
     }
 
-    // Zombies chase, decay their claw cooldown, then claw the player on contact.
+    // Zombies path to the player along a BFS flow field (pathfind.js), routing around
+    // the core and walls instead of walking straight. Rebuild the field only when the
+    // player crosses into a new cell — it's a ~256-cell BFS, cheap but not per-frame free.
+    const pcol = Math.floor(player.x), prow = Math.floor(player.y);
+    if (!flowField || pcol !== flowCol || prow !== flowRow) {
+      flowField = buildFlowField(LEVEL, world, pcol, prow, isBlocked);
+      flowCol = pcol; flowRow = prow;
+    }
     zombies = zombies.map((z) => {
-      const moved = stepZombie(MAP, z, player, dt, z.speed);
+      const moved = stepZombieAlong(LEVEL, world, z, flowField, dt, z.speed, isBlocked);
       return { ...moved, hitCooldown: Math.max(0, (z.hitCooldown || 0) - dt * 1000) };
     });
     for (let i = 0; i < zombies.length; i++) {
@@ -322,13 +337,26 @@
     // Passive health regen (survival owns the 2s-delay / 3s-refill curve).
     player = regen(player, nowMs);
 
-    // Trickle spawner (placeholder until rounds.js drives real waves).
-    spawnTimer -= dt;
-    if (spawnTimer <= 0 && zombies.length < MAX_ALIVE) {
-      spawnTimer = SPAWN_INTERVAL;
-      const s = SPAWN_POINTS[(Math.random() * SPAWN_POINTS.length) | 0];
-      zombies.push({ id: nextZombieId++, x: s.x, y: s.y, angle: 0,
-                     hp: ZOMBIE_HP, speed: ZOMBIE_SPEED, state: "chase", hitCooldown: 0 });
+    // Round/wave control — rounds.js owns every pacing + escalation number; index.html
+    // only feeds the live zombie count back in and reacts to the phase transitions:
+    //   spawning → (all spawned) waiting → (all killed) intermission → (timer) next round.
+    spawnState = { ...spawnState, alive: zombies.length };
+    if (spawnState.phase === "spawning") {
+      const tick = tickSpawner(spawnState, dt);
+      spawnState = tick.state;
+      if (tick.shouldSpawn) {
+        const s = SPAWN_CELLS[(Math.random() * SPAWN_CELLS.length) | 0];
+        zombies.push({ id: nextZombieId++, x: s.x, y: s.y, angle: 0,
+                       hp: zombieHealthForRound(spawnState.round),
+                       speed: zombieSpeedForRound(spawnState.round),
+                       state: "chase", hitCooldown: 0 });
+      }
+      if (spawnState.toSpawn === 0) spawnState = advanceRound(spawnState);  // → waiting
+    } else if (spawnState.phase === "waiting") {
+      if (zombies.length === 0) spawnState = advanceRound(spawnState);      // → intermission
+    } else if (spawnState.phase === "intermission") {
+      spawnState = { ...spawnState, roundTimer: (spawnState.roundTimer || 0) - dt };
+      if (spawnState.roundTimer <= 0) spawnState = advanceRound(spawnState); // → next round
     }
 
     trauma = tickShake(trauma, dt);                  // trauma decays; shake follows
@@ -373,7 +401,7 @@
     for (let x = 0; x < W; x++) {
       const cameraX = (2 * x) / W - 1;
       const rdx = dirX + planeX * cameraX, rdy = dirY + planeY * cameraX;
-      const hit = castRay(MAP, player.x, player.y, rdx, rdy);
+      const hit = castRay(LEVEL.grid, player.x, player.y, rdx, rdy);
       const dist = Math.max(hit.perpWallDist, 0.0001);
       zbuffer[x] = dist;
 
@@ -611,9 +639,9 @@
 
     // Walls, drawn relative to the player so the dish scrolls under a fixed centre.
     ctx.fillStyle = "#3a5547";
-    for (let y = 0; y < MAP_H; y++)
-      for (let x = 0; x < MAP_W; x++) {
-        if (!MAP[y][x]) continue;
+    for (let y = 0; y < LEVEL.H; y++)
+      for (let x = 0; x < LEVEL.W; x++) {
+        if (!LEVEL.grid[y][x]) continue;
         ctx.fillRect(cx + (x + 0.5 - player.x) * s - s / 2,
                      cy + (y + 0.5 - player.y) * s - s / 2, s, s);
       }
@@ -688,6 +716,11 @@
     const a = player.ammo[player.weapon];
     const w = WEAPONS[player.weapon];
     const reloading = player.reloadTimer !== undefined;
+    // Round readout: count during a round, countdown to the next during intermission.
+    roundEl.innerHTML = spawnState.phase === "intermission"
+      ? "ROUND <b>" + spawnState.round + "</b> — NEXT IN " +
+        Math.max(0, Math.ceil(spawnState.roundTimer || 0)) + "S"
+      : "ROUND <b>" + spawnState.round + "</b>";
     if (player.points !== lastPoints) {                 // pop the score when it changes
       pointsEl.textContent = player.points;
       pointsEl.classList.remove("pop"); void pointsEl.offsetWidth; pointsEl.classList.add("pop");
