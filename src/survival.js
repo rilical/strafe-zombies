@@ -23,9 +23,8 @@ export function applyContactDamage(player, dmg, nowMs) {
 /**
  * regen(player, nowMs) -> player'
  *
- * After a short quiet delay, derives a stateless recovery floor from
- * lastDamageMs so repeated calls in the fixed-timestep loop stay pure and
- * idempotent. Health reaches player.maxHp about 5s after regen starts.
+ * After a short quiet delay, interpolates the player's missing health toward
+ * maxHp. Health reaches player.maxHp about 5s after regen starts.
  */
 export function regen(player, nowMs) {
   if (player.hp <= 0) return { ...player, hp: 0 };
@@ -38,11 +37,12 @@ export function regen(player, nowMs) {
   if (regenMs === 0) return { ...player, hp: currentHp };
 
   const progress = Math.min(regenMs / REGEN_TO_FULL_MS, 1);
-  const recoveredHp = maxHp * progress;
+  const missingHp = maxHp - currentHp;
+  const recoveredHp = currentHp + missingHp * progress;
 
   return {
     ...player,
-    hp: Math.min(maxHp, Math.max(currentHp, recoveredHp)),
+    hp: Math.min(maxHp, recoveredHp),
   };
 }
 

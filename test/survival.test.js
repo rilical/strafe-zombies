@@ -47,8 +47,15 @@ describe("regen — delayed health recovery", () => {
     const halfway = regen(player, 6500);
     const full = regen(player, 9000);
 
-    expect(halfway.hp).toBeCloseTo(50, 6);
+    expect(halfway.hp).toBeCloseTo(62.5, 6);
     expect(full.hp).toBe(100);
+  });
+
+  it("starts restoring missing health as soon as the quiet delay has elapsed", () => {
+    const player = { hp: 50, maxHp: 100, lastDamageMs: 1000 };
+    const next = regen(player, 4100);
+
+    expect(next.hp).toBeCloseTo(51, 6);
   });
 
   it("never exceeds maxHp and respects raised maxHp caps", () => {
