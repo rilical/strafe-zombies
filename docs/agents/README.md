@@ -13,7 +13,7 @@ Parallel construction of the Nacht-der-Untoten v1 (design:
 - The integration agent merges green, reviewed branches in build-sequence order and wires
   them into `index.html`. No module agent ever edits `index.html`.
 
-## Roster (all 16 can run in parallel)
+## Roster (all 17 can run in parallel)
 
 | Agent | Branch | Owns | Consumed by |
 |---|---|---|---|
@@ -33,6 +33,7 @@ Parallel construction of the Nacht-der-Untoten v1 (design:
 | [interact](interact.md) | `feat/interact` | `src/interact.js` | integration (buy prompts + F-key purchases) |
 | [powerups](powerups.md) | `feat/powerups` | `src/powerups.js` | integration |
 | [decals](decals.md) | `feat/decals` | `src/decals.js` | integration |
+| [sfx](sfx.md) | `feat/sfx` | `src/sfx.js` | integration (WebAudio playback) |
 
 ## Universal workflow — every agent follows this
 
