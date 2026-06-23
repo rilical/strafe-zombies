@@ -34,6 +34,9 @@ sit) for flavour — but keep a clean, small grid that fits the engine conventio
 - `spawn` cell is walkable (empty).
 - Every `window` / `mount` / `box` / `perkMachine` cell is adjacent to a walkable cell.
 - Each `debris.cells` cell is currently solid in the base grid (it only opens when bought).
+  Debris is drawn as solid rubble (grid value `3`) so the raycaster renders a closed door as a
+  wall; `barriers.isBlocked` overrides that for passability (open door → passable regardless of
+  the grid value), so debris-as-rubble is intentional and does not break the buyable-door path.
 
 ## Definition of done
 Shape-correct `LEVEL` · tests green · `npm test` green · commented · self-contained PR ·

@@ -97,4 +97,29 @@ describe("isBlocked", () => {
     expect(isBlocked(LEVEL, world, 1, 1)).toBe(false);
     expect(isBlocked(LEVEL, withOpenDoor, 2, 2)).toBe(false);
   });
+
+  // The real level draws debris as solid rubble (a non-zero grid value) so the
+  // raycaster renders it as a wall until it is cleared. The door, not the static
+  // grid, governs whether such a cell can be walked through: buying it must open
+  // the path. So a debris cell's state overrides its grid value.
+  it("treats a debris cell drawn as solid rubble as passable once its door is open", () => {
+    const RUBBLE_LEVEL = {
+      grid: [
+        [1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1],
+        [1, 0, 3, 0, 1], // (2,2) is debris rubble — non-zero in the base grid
+        [1, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1],
+      ],
+      W: 5,
+      H: 5,
+      windows: [],
+      debris: [{ id: "rubble", cost: 1000, cells: [[2, 2]], opensRoom: "x" }],
+    };
+    const world = createWorld(RUBBLE_LEVEL);
+
+    expect(isBlocked(RUBBLE_LEVEL, world, 2, 2)).toBe(true);          // closed → blocked rubble
+    const open = openDoor(world, "rubble");
+    expect(isBlocked(RUBBLE_LEVEL, open, 2, 2)).toBe(false);          // bought → path opens
+  });
 });

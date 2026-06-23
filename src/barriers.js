@@ -59,27 +59,28 @@ export function tearBoard(world, winId) {
 }
 
 /**
- * Reports whether a cell is blocked by walls, map bounds, or a closed debris door.
+ * Reports whether a cell is blocked by map bounds, a closed debris door, or a wall.
+ *
+ * A debris-door cell is governed entirely by the door: closed → blocked, bought
+ * (open) → passable, even though the level draws it as solid rubble (a non-zero
+ * grid value) until then. That override is what makes buying a door open the
+ * path, so it is checked before the static grid-wall test.
  */
 export function isBlocked(level, world, cx, cy) {
   if (cy < 0 || cx < 0 || cy >= level.H || cx >= level.W) {
     return true;
   }
 
-  if (level.grid[cy][cx] !== 0) {
-    return true;
-  }
-
   for (const debris of level.debris) {
-    if (world.doors[debris.id] === true) {
-      continue;
-    }
-
     for (const [cellX, cellY] of debris.cells) {
       if (cellX === cx && cellY === cy) {
-        return true;
+        return world.doors[debris.id] !== true;
       }
     }
+  }
+
+  if (level.grid[cy][cx] !== 0) {
+    return true;
   }
 
   return false;

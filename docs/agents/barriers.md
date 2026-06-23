@@ -20,6 +20,13 @@ isBlocked(level, world, cx, cy) -> boolean    // wall, OR a closed debris door's
 All immutable. `isBlocked` returns true for a base grid wall or any cell belonging to a debris
 door that is still closed; a bought (open) door's cells become passable.
 
+**Debris overrides the static grid.** The `level` module draws debris as solid rubble (grid
+value `3`) so the raycaster renders a closed door as a wall. `isBlocked` therefore checks
+debris-door membership *before* the grid-wall test: a debris cell's passability is governed
+entirely by its door (closed → blocked, open → passable), regardless of its non-zero grid
+value. This is the override that makes buying a door actually open the path — without it, an
+opened door's rubble cells would stay blocked and the purchase would be a no-op.
+
 ## Consumes
 `LEVEL` shape (frozen — see [`README.md`](README.md)). Use a small `LEVEL` fixture in tests;
 do **not** import the real `level` module.
