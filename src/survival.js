@@ -2,8 +2,8 @@
 // Integration owns contact detection and per-zombie cooldowns; this module only
 // updates the player health fields it is handed.
 
-const REGEN_DELAY_MS = 3000;
-const REGEN_TO_FULL_MS = 5000;
+const REGEN_DELAY_MS = 2000;
+const REGEN_TO_FULL_MS = 3000;
 
 /**
  * applyContactDamage(player, dmg, nowMs) -> player'
@@ -24,7 +24,7 @@ export function applyContactDamage(player, dmg, nowMs) {
  * regen(player, nowMs) -> player'
  *
  * After a short quiet delay, interpolates the player's missing health toward
- * maxHp. Health reaches player.maxHp about 5s after regen starts.
+ * maxHp. Health reaches player.maxHp about 5s after the last hit.
  */
 export function regen(player, nowMs) {
   if (player.hp <= 0) return { ...player, hp: 0 };

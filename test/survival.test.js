@@ -35,7 +35,7 @@ describe("applyContactDamage — zombie contact hits", () => {
 describe("regen — delayed health recovery", () => {
   it("does nothing before the quiet delay and does not mutate input", () => {
     const player = { hp: 25, maxHp: 100, lastDamageMs: 1000 };
-    const next = regen(player, 3999);
+    const next = regen(player, 2999);
 
     expect(next.hp).toBe(25);
     expect(next).not.toBe(player);
@@ -44,8 +44,8 @@ describe("regen — delayed health recovery", () => {
 
   it("moves hp toward maxHp after the delay and reaches full health about 5s later", () => {
     const player = { hp: 25, maxHp: 100, lastDamageMs: 1000 };
-    const halfway = regen(player, 6500);
-    const full = regen(player, 9000);
+    const halfway = regen(player, 4500);
+    const full = regen(player, 6000);
 
     expect(halfway.hp).toBeCloseTo(62.5, 6);
     expect(full.hp).toBe(100);
@@ -53,9 +53,9 @@ describe("regen — delayed health recovery", () => {
 
   it("starts restoring missing health as soon as the quiet delay has elapsed", () => {
     const player = { hp: 50, maxHp: 100, lastDamageMs: 1000 };
-    const next = regen(player, 4100);
+    const next = regen(player, 3100);
 
-    expect(next.hp).toBeCloseTo(51, 6);
+    expect(next.hp).toBeCloseTo(51.666666, 5);
   });
 
   it("never exceeds maxHp and respects raised maxHp caps", () => {
