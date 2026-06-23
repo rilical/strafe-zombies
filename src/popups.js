@@ -1,6 +1,6 @@
-// RISE_RATE: how fast popups float upward (units per second).
-// Tunable feel constant; match the renderer's coordinate space.
-const RISE_RATE = 1;
+// RISE_RATE: upward float speed in screen pixels per second.
+// Popups live in screen-pixel space (spawned at the zombie's projected screen position).
+const RISE_RATE = 40;
 
 /**
  * spawnPopup — append a new popup entry to the list.

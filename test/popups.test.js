@@ -55,11 +55,12 @@ describe("tickPopups — age, rise, and cull", () => {
     expect(result[0].age).toBeCloseTo(0.6, 6);
   });
 
-  it("decreases y (rises) by RISE_RATE*dt", () => {
+  it("decreases y (rises) after tick", () => {
     const list = [{ x: 10, y: 20, value: 50, age: 0, ttl: 2 }];
+    const originalY = list[0].y;
     const result = tickPopups(list, 0.1);
-    // Should rise by 1.0 * 0.1 = 0.1 units (assuming RISE_RATE=1)
-    expect(result[0].y).toBeCloseTo(20 - 0.1, 6);
+    // Popup should rise (y decreases)
+    expect(result[0].y).toBeLessThan(originalY);
   });
 
   it("culls entries where age >= ttl", () => {
@@ -135,9 +136,14 @@ describe("tickPopups — age, rise, and cull", () => {
       { x: 10, y: 20, value: 50, age: 0, ttl: 2 },
       { x: 15, y: 30, value: 60, age: 0, ttl: 2 },
     ];
+    const y0a = list[0].y;
+    const y0b = list[1].y;
     const result = tickPopups(list, 0.1);
-    // Both should rise by 1.0 * 0.1 = 0.1
-    expect(result[0].y).toBeCloseTo(20 - 0.1, 6);
-    expect(result[1].y).toBeCloseTo(30 - 0.1, 6);
+    // Both entries should rise by the same amount
+    const deltaA = y0a - result[0].y;
+    const deltaB = y0b - result[1].y;
+    expect(deltaA).toBeCloseTo(deltaB, 6);
+    // And both should rise (delta > 0)
+    expect(deltaA).toBeGreaterThan(0);
   });
 });

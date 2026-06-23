@@ -34,3 +34,6 @@ None.
 ## Definition of done
 Contract met · tests green · `npm test` green · commented · self-contained PR · report to
 integration agent.
+
+## Coordinate space (FROZEN)
+Popups are stored in screen-pixel space, spawned at the zombie's projected screen position on hit/kill. They float straight up the screen at ~40 px/s (RISE_RATE) and fade over their ttl. The integration renderer (index.html) projects the zombie to screen at spawn time and draws "+value" text, fading by age/ttl.
