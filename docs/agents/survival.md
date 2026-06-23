@@ -12,12 +12,14 @@ after a quiet moment, and report game over. Pure and immutable.
 ## Contract — you MUST export (exact)
 ```js
 applyContactDamage(player, dmg, nowMs) -> player'  // hp = max(0, hp-dmg); lastDamageMs = nowMs
-regen(player, nowMs) -> player'                     // after REGEN_DELAY since lastDamageMs,
-                                                    // move hp toward player.maxHp; full ~5s later
+regen(player, nowMs) -> player'                     // quiet 2s after lastDamageMs, then refill
+                                                    // hp toward player.maxHp over 3s (full ~5s after last hit)
 isGameOver(player) -> boolean                       // player.hp <= 0
 ```
-Constants: base contact damage 50 (two hits down a 100-HP player). Read `player.maxHp` as the
-cap (Juggernog raises it to 250 — the integration agent sets `maxHp`; **do not import perks**).
+Constants (frozen): base contact damage 50 (two hits down a 100-HP player). Regen quiet delay
+`REGEN_DELAY_MS = 2000`, then linear refill to `maxHp` over `REGEN_TO_FULL_MS = 3000` (so a
+player is full ~5s after the last hit). Read `player.maxHp` as the cap (Juggernog raises it to
+250 — the integration agent sets `maxHp`; **do not import perks**).
 Per-zombie attack cooldown lives on `zombie.hitCooldown`, not here.
 
 ## Consumes
