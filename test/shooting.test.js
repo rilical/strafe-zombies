@@ -48,6 +48,21 @@ describe("shootRay — hitscan target selection", () => {
 
     expect(shootRay(OPEN_ROOM_MAP, 1.5, 1.5, 1, 0, [zombie])).toBeNull();
   });
+
+  it("skips defeated zombies (hp <= 0) so the ray reaches a living one behind", () => {
+    const dead = { id: "dead", x: 2.8, y: 1.5, hp: 0 };
+    const alive = { id: "alive", x: 3.6, y: 1.5, hp: 40 };
+
+    const hit = shootRay(CORRIDOR_MAP, 1.5, 1.5, 1, 0, [dead, alive]);
+
+    expect(hit.zombie).toBe(alive);
+  });
+
+  it("returns null when the only zombie in the path is already defeated", () => {
+    const dead = { id: "dead", x: 3.0, y: 1.5, hp: 0 };
+
+    expect(shootRay(CORRIDOR_MAP, 1.5, 1.5, 1, 0, [dead])).toBeNull();
+  });
 });
 
 describe("damage and scoring", () => {

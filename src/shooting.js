@@ -38,6 +38,10 @@ export function shootRay(map, px, py, dx, dy, zombies, opts = {}) {
   let nearest = null;
 
   for (const zombie of zombies) {
+    // Skip already-defeated bodies: a corpse left in the array must not absorb the ray
+    // (blocking a living zombie behind it) nor yield repeat hit-points. hp-less fixtures
+    // (`?? 1`) are treated as alive so existing callers/tests are unaffected.
+    if ((zombie.hp ?? 1) <= 0) continue;
     const t = intersectRayCircle(px, py, dx, dy, zombie.x, zombie.y, radius);
     if (t === null || t >= wallT) continue;
     if (nearest === null || t < nearest.t) nearest = { zombie, t };
