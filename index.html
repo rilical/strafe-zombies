@@ -38,6 +38,15 @@
   #ammo small { font-size: 18px; color: #9ab; }
   #ammo.empty #mag { color: #e44; }
   #ammo #weapon { font: 700 11px ui-monospace, monospace; color: #ffd54a; letter-spacing: 2px; margin-bottom: 3px; }
+  /* Stowed (other-slot) weapon, shown small above the active read-out. */
+  #ammo #stowed { font: 700 11px ui-monospace, monospace; color: #8aa; opacity: .7; margin-bottom: 4px; }
+  /* Owned Perk-a-Cola icons — a row of coloured badges under the round line. */
+  #perks { margin-top: 8px; display: flex; gap: 5px; }
+  #perks .perk {
+    font: 800 10px ui-monospace, monospace; color: #fff; padding: 3px 5px;
+    border-radius: 3px; letter-spacing: 1px; text-shadow: 0 1px 2px #000;
+    box-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
   #lowhp {
     position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s;
     background: radial-gradient(ellipse at center, rgba(120,0,0,0) 42%, rgba(120,0,0,.6) 100%);
@@ -76,9 +85,9 @@
 <body>
   <canvas id="screen" width="320" height="200"></canvas>
   <div id="lowhp"></div>
-  <div id="hud"><div id="points">0</div><div id="round">ROUND <b>1</b></div><div id="powerups"></div></div>
-  <div id="ammo"><div id="weapon"></div><span id="mag">0</span> <small id="reserve">/ 0</small></div>
-  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims the gun &nbsp;·&nbsp; screen edges turn &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload &nbsp;·&nbsp; F buy</div>
+  <div id="hud"><div id="points">0</div><div id="round">ROUND <b>1</b></div><div id="powerups"></div><div id="perks"></div></div>
+  <div id="ammo"><div id="stowed"></div><div id="weapon"></div><span id="mag">0</span> <small id="reserve">/ 0</small></div>
+  <div id="hint">WASD move &nbsp;·&nbsp; mouse aims &nbsp;·&nbsp; click / hold to shoot &nbsp;·&nbsp; R reload &nbsp;·&nbsp; Q / wheel swap &nbsp;·&nbsp; F buy</div>
   <div id="buyprompt"></div>
   <div id="overlay"></div>
   <div id="crt"></div>
@@ -98,14 +107,14 @@
   import { buildFlowField, stepZombieAlong } from "./src/pathfind.js";
   import { WEAPONS, fire as fireWeapon, startReload, tickReload,
            buyWallWeapon, rollMysteryBox } from "./src/weapons.js";
-  import { resolveShot, shootRay } from "./src/shooting.js";
+  import { resolveShot, shootRay, applyDamage, scoreForHit } from "./src/shooting.js";
   import { isHeadshot } from "./src/hitzones.js";
   import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
   import { earn, spend } from "./src/economy.js";
-  import { PERKS, grantPerk, effectiveMaxHp, effectiveRpm, effectiveReloadMs } from "./src/perks.js";
+  import { PERKS, grantPerk, effectiveMaxHp, effectiveRpm, effectiveReloadMs, perkBadges } from "./src/perks.js";
   import { findInteractable } from "./src/interact.js";
   import { maybeDrop, tickPowerUps, applyNuke, applyMaxAmmo, activate } from "./src/powerups.js";
-  import { projectSprites, projectSprite } from "./src/sprites.js";
+  import { projectSprite } from "./src/sprites.js";
   import { tickShake, shakeOffset } from "./src/shake.js";
   import { spawnPopup, tickPopups } from "./src/popups.js";
   import { spawnBloodPuff, spawnSpark, tickParticles } from "./src/particles.js";
@@ -114,6 +123,14 @@
   import { buyableMarkers } from "./src/markers.js";
   import { windowPoints, pickWindow, tickBreak, findRepairableWindow,
            REPAIR_REWARD, MAX_BOARDS } from "./src/barricades.js";
+  // Batch 6 — procedural polish: two-slot loadout, weapon viewmodels, Ray-Gun bolts,
+  // decal zombies, visible buyable machines, and procedurally textured walls.
+  import { createLoadout, equip, swap, activeWeapon } from "./src/loadout.js";
+  import { viewmodel } from "./src/viewmodels.js";
+  import { spawnBolt, stepBolt, boltHitsWall, splashTargets } from "./src/projectiles.js";
+  import { zombieSprite, zombieBands } from "./src/zombieArt.js";
+  import { worldProps, propSprite } from "./src/props.js";
+  import { wallShade, themeForCell } from "./src/walltex.js";
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -128,9 +145,14 @@
   const lowhpEl = document.getElementById("lowhp");
   const buypromptEl = document.getElementById("buyprompt");
   const powerupsEl = document.getElementById("powerups");
+  const perksEl = document.getElementById("perks");
+  const stowedEl = document.getElementById("stowed");
   let lastPoints = -1;
+  let perkBadgeCount = -1;                 // cache so the perk HUD row only re-renders on change
   // HUD labels for the two timed power-ups (the only entries activate() ever stores).
   const POWERUP_LABELS = { instaKill: "INSTA-KILL", doublePoints: "2× POINTS" };
+  // Perk-a-Cola purchase jingles (src/sfx.js presets), keyed by perk id.
+  const JINGLE = { jugg: "jingleJugg", speedCola: "jingleSpeed", doubleTap: "jingleDoubleTap" };
 
   // Cached gradients for the sky/floor backdrop and the screen-edge vignette.
   const skyGrad = ctx.createLinearGradient(0, -8, 0, H / 2);
@@ -213,10 +235,16 @@
   // the interior cell and joining the flow-field chase. Every room is reachable from the
   // spawn, so the field can train any climbed-in zombie straight to the player.
 
-  // Wall tints by grid value: 1 = Nacht brick, 2 = heavy stone core, 3 = debris rubble.
-  const WALL_COLORS = [null, [176, 58, 58], [104, 102, 116], [120, 86, 52]];
+  // Wall colour now comes from src/walltex.js (procedural brick/concrete/planks/blood by
+  // map quadrant); only the distance-fog tone stays here as a render constant.
   const FOG = [16, 20, 16];     // distant walls fade toward this sickly tone, not black
   const rgb = (r, g, b) => "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  // Parse a "#rrggbb" string into an [r,g,b] byte triple (for src/props palettes).
+  const hexRgb = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
 
   // ---- Mutable game state (player matches the frozen GameState contract) ----
   let player, zombies, nextZombieId, gameOver, muzzleFlash, hitMarker, headshotFlash, nowMs;
@@ -225,6 +253,7 @@
   let powerUps, activePowerUps, nukeFlash, announcedRound;  // floor drops, timed effects, nuke flash, round-howl latch
   let trauma, popups, blood, sparks, decals;   // game-juice state: shake, +N popups, particles, persistent decals
   let hitFlash, corpses, bobPhase, recoil, moving;   // actor-feel state (flash/death/bob/kick)
+  let bolts, groanTimer, zart;   // Ray-Gun projectiles in flight, ambient-groan clock, per-zombie art cache
   // The crosshair tracks the real cursor (in canvas pixels); the gun aims at it.
   let cursorX = W / 2, cursorY = H / 2;
 
@@ -233,7 +262,7 @@
     return {
       x: LEVEL.spawn.x, y: LEVEL.spawn.y, angle: LEVEL.spawn.angle,
       hp: 100, maxHp: 100, points: 500,
-      weapon: "m1911",
+      loadout: createLoadout("m1911"),                 // two slots; m1911 starts in slot 0
       ammo: { m1911: { mag: w.magSize, reserve: w.reserve } },
       lastShotMs: undefined, reloadTimer: undefined, lastDamageMs: -1e9,
       perks: new Set(),
@@ -257,6 +286,7 @@
     nowMs = 0;
     trauma = 0; popups = []; blood = []; sparks = []; decals = [];
     hitFlash = {}; corpses = []; bobPhase = 0; recoil = 0; moving = false;
+    bolts = []; groanTimer = 3; zart = {};   // no bolts in flight; first ambient groan in 3s; empty art cache
     overlay.classList.remove("show");
   }
   reset();
@@ -266,10 +296,13 @@
   addEventListener("keydown", (e) => {
     keys[e.code] = true;
     if (e.code === "KeyR" && !gameOver) tryStartReload();
+    if (e.code === "KeyQ" && !e.repeat && !gameOver) trySwap();
     if (e.code === "KeyF" && !e.repeat && !gameOver) tryBuy();
     if (e.code === "Enter" && gameOver) reset();
   });
   addEventListener("keyup", (e) => { keys[e.code] = false; });
+  // The mouse wheel also toggles the two weapon slots (either direction).
+  addEventListener("wheel", () => { if (!gameOver) trySwap(); }, { passive: true });
 
   // No pointer-lock: the visible cursor drives the gun. Map the page pointer into
   // canvas pixels so the crosshair lines up with the column the raycaster renders.
@@ -295,26 +328,39 @@
   // ---- Weapon-state composition seam (per docs/agents/README.md) ----
   // weapons.* operate on a flat { id, mag, reserve, reloadTimer, lastShotMs };
   // compose it from the player, run the module, then write the fields back.
+  // The active weapon id now comes from the two-slot loadout (src/loadout.js).
+  const activeId = () => activeWeapon(player.loadout);
   function composeWeapon() {
-    const a = player.ammo[player.weapon];
-    return { id: player.weapon, mag: a.mag, reserve: a.reserve,
+    const id = activeId();
+    const a = player.ammo[id];
+    return { id, mag: a.mag, reserve: a.reserve,
              reloadTimer: player.reloadTimer, lastShotMs: player.lastShotMs };
   }
   function writeWeapon(s) {
+    const id = activeId();
     player = {
       ...player,
-      ammo: { ...player.ammo, [player.weapon]: { mag: s.mag, reserve: s.reserve } },
+      ammo: { ...player.ammo, [id]: { mag: s.mag, reserve: s.reserve } },
       reloadTimer: s.reloadTimer, lastShotMs: s.lastShotMs,
     };
   }
   // Perk-adjusted cadence/reload for the equipped gun (Double Tap rpm, Speed Cola reload);
   // both fall back to the WEAPONS table when the player owns no matching perk.
-  const perkRpm = () => effectiveRpm(player, WEAPONS[player.weapon].rpm);
-  const perkReloadMs = () => effectiveReloadMs(player, WEAPONS[player.weapon].reloadMs);
+  const perkRpm = () => effectiveRpm(player, WEAPONS[activeId()].rpm);
+  const perkReloadMs = () => effectiveReloadMs(player, WEAPONS[activeId()].reloadMs);
   function tryStartReload() {
     const wasReloading = player.reloadTimer !== undefined;
     writeWeapon(startReload(composeWeapon(), nowMs, { reloadMs: perkReloadMs() }));
     if (!wasReloading && player.reloadTimer !== undefined) playSfx("reload");  // only on a fresh reload
+  }
+  // Q / mouse-wheel toggle the two loadout slots. A swap cancels any in-progress reload
+  // and the shot clock so the freshly raised gun behaves predictably; no-op if the other
+  // slot is still empty.
+  function trySwap() {
+    const next = swap(player.loadout);
+    if (next.active === player.loadout.active) return;
+    player = { ...player, loadout: next, reloadTimer: undefined, lastShotMs: undefined };
+    playSfx("reload");                                   // a quick mechanical raise cue
   }
 
   // ---- Buying (input glue) ----
@@ -338,12 +384,14 @@
     if (!paid.ok) { playSfx("deny"); return; }
     player = paid.player;
     if (it.kind === "mount") {
-      player = buyWallWeapon(player, it.weaponId);          // grant + equip at full ammo
-      player = { ...player, reloadTimer: undefined, lastShotMs: undefined };  // fresh gun
+      player = buyWallWeapon(player, it.weaponId);          // grant + full ammo (weapons.js)
+      player = { ...player, loadout: equip(player.loadout, it.weaponId).loadout,
+                 reloadTimer: undefined, lastShotMs: undefined };   // slot it in + raise it fresh
       flashBuy(WEAPONS[it.weaponId].name);
     } else if (it.kind === "box") {
       const roll = rollMysteryBox(player, Math.random);     // random weapon, then equip
-      player = { ...roll.player, reloadTimer: undefined, lastShotMs: undefined };
+      player = { ...roll.player, loadout: equip(player.loadout, roll.weaponId).loadout,
+                 reloadTimer: undefined, lastShotMs: undefined };
       flashBuy(WEAPONS[roll.weaponId].name + "!");
     } else if (it.kind === "perk") {
       player = grantPerk(player, it.perkId);
@@ -356,9 +404,48 @@
       flowField = null;                                     // force a flow-field rebuild
       flashBuy("DOOR OPEN");
     }
-    playSfx(it.kind === "debris" ? "door" : "buy");          // purchase confirm (rumble for doors)
+    // Perk buys play their Perk-a-Cola jingle; everything else gets the generic confirm
+    // (a heavier rumble for doors).
+    if (it.kind === "perk") playSfx(JINGLE[it.perkId] || "buy");
+    else playSfx(it.kind === "debris" ? "door" : "buy");
   }
   function flashBuy(text) { buyMsg = text; buyMsgT = 1.4; }   // brief centred confirmation cue
+
+  // Ray-Gun bolt detonation (presentation orchestration). The blast radius + per-zombie
+  // damage come from src/projectiles.splashTargets; each hit is applied with the same
+  // pure rules the bullet path uses (shooting.applyDamage / scoreForHit), so no new game
+  // rule lives here — only the juice (flash, blood, popups, corpses, drops) the hitscan
+  // path already fires inline.
+  function detonateBolt(bolt) {
+    sparks = spawnSpark(sparks, bolt.x, bolt.y);             // impact spark at the blast centre
+    const targets = splashTargets(bolt, zombies);
+    if (targets.length === 0) return;
+    const ptMult = activePowerUps.doublePoints > 0 ? 2 : 1;
+    let gain = 0, anyKill = false;
+    zombies = zombies.map((z) => {
+      const t = targets.find((q) => q.id === z.id);
+      if (!t) return z;
+      const damaged = applyDamage(z, t.damage);
+      const killed = z.hp > 0 && damaged.hp === 0;
+      const award = scoreForHit(z, killed, false) * ptMult;
+      gain += award;
+      hitFlash[z.id] = nowMs;
+      blood = spawnBloodPuff(blood, z.x, z.y);
+      const pr = projectSprite(player, FOV, W, H, z);
+      if (pr.visible) popups = spawnPopup(popups, pr.screenX, pr.drawStartY, award);
+      if (killed) {
+        anyKill = true;
+        corpses.push({ x: z.x, y: z.y, bornMs: nowMs });
+        decals = addDecal(decals, { x: z.x, y: z.y, kind: "blood", ttl: 12 }, 96);
+        const drop = maybeDrop(z, Math.random);
+        if (drop) powerUps.push(drop);
+      }
+      return damaged;
+    }).filter((z) => z.hp > 0);
+    if (gain > 0) { player = earn(player, gain); hitMarker = 0.12; }
+    if (anyKill) playSfx("death");                          // zombie death gurgle (batch-6 voice)
+    trauma = Math.min(1, trauma + (anyKill ? 0.3 : 0.14));
+  }
 
   // Display name for the buy prompt — reads the owning module's data so labels never drift.
   function buyLabel(it) {
@@ -406,7 +493,7 @@
     writeWeapon(tickReload(composeWeapon(), nowMs));
 
     // Firing: weapons.fire gates cadence/ammo; shooting.resolveShot picks the target.
-    const weapon = WEAPONS[player.weapon];
+    const weapon = WEAPONS[activeId()];
     const wantFire = weapon.auto ? triggerHeld : triggerEdge;
     triggerEdge = false;
     if (wantFire) {
@@ -418,10 +505,15 @@
         const { state, didFire } = fireWeapon(ws, nowMs, { rpm: perkRpm() });
         if (didFire) {
           writeWeapon(state);
-          playSfx("shoot");
           muzzleFlash = 0.05;
           recoil = 1;                             // weapon kick + crosshair bloom
           trauma = Math.min(1, trauma + 0.16);    // every shot kicks the camera a little
+          playSfx("shoot");
+          if (weapon.projectile) {
+            // Wonder weapon (Ray Gun): launch a travelling bolt. Its damage resolves on
+            // impact (wall or max range) via detonateBolt — no hitscan resolve here.
+            bolts.push(spawnBolt(player.x, player.y, aimAngle, weapon));
+          } else {
           // Pre-resolve the target so the crosshair's vertical aim decides a headshot
           // BEFORE damage lands (resolveShot needs the boolean to double damage).
           // shootRay (src/shooting.js) picks WHICH zombie; isHeadshot (src/hitzones.js)
@@ -462,6 +554,7 @@
             hitMarker = 0.12;
             // One marker sound, prioritised kill > headshot > body-hit.
             playSfx(res.killedId != null ? "kill" : (res.headshot ? "headshot" : "hit"));
+            if (res.killedId != null) playSfx("death");   // layer the zombie death gurgle on a kill
           } else {
             // Missed every zombie → the bullet bites a wall; spark where it lands.
             const wh = castRay(dynMap, player.x, player.y, ca, sa);
@@ -471,8 +564,23 @@
               decals = addDecal(decals, { x: player.x + ca * d, y: player.y + sa * d, kind: "hole", ttl: Infinity }, 96);
           }
           zombies = res.zombies.filter((z) => z.hp > 0);
+          }                                          // end hitscan branch (non-projectile)
         }
       }
+    }
+
+    // Ray-Gun bolts: advance each in flight; a bolt that enters a wall cell or reaches its
+    // max range detonates (splash damage + juice). cellBlocked reads the live map (walls +
+    // unopened debris), matching the player's own collision test.
+    if (bolts.length) {
+      const cellBlocked = (cx, cy) => !dynMap[cy] || dynMap[cy][cx] !== 0;
+      const live = [];
+      for (let bolt of bolts) {
+        bolt = stepBolt(bolt, dt);
+        if (boltHitsWall(bolt, cellBlocked) || bolt.dead) detonateBolt(bolt);
+        else live.push(bolt);
+      }
+      bolts = live;
     }
 
     // Zombies path to the player along a BFS flow field (pathfind.js), routing around
@@ -537,7 +645,7 @@
                        hp: zombieHealthForRound(spawnState.round),
                        speed: zombieSpeedForRound(spawnState.round),
                        state: "breaking", window: win.id, tearTimer: 0, hitCooldown: 0 });
-        playSfx("groan");                            // a fresh shambler groans in (pitch varies)
+        playSfx("snarl");                            // a fresh shambler snarls as it rips in
       }
       if (spawnState.toSpawn === 0) spawnState = advanceRound(spawnState);  // → waiting
     } else if (spawnState.phase === "waiting") {
@@ -571,6 +679,12 @@
     powerUps = keptDrops;
 
     trauma = tickShake(trauma, dt);                  // trauma decays; shake follows
+    // Ambient horde groan on a wandering timer while any zombie is alive.
+    groanTimer -= dt;
+    if (groanTimer <= 0) {
+      if (zombies.length > 0) playSfx("groan");
+      groanTimer = 2.5 + Math.random() * 3.5;        // next ambient groan in ~2.5–6s
+    }
     blood = tickParticles(blood, dt);
     sparks = tickParticles(sparks, dt);
     decals = tickDecals(decals, dt);                 // age blood pools (cull on ttl); holes are permanent
@@ -631,28 +745,25 @@
       let wallX = hit.side === 0 ? player.y + dist * rdy : player.x + dist * rdx;
       wallX -= Math.floor(wallX);
 
-      // Per-cell tint (so adjacent bricks differ) + a vertical mortar groove.
-      const cellHash = ((hit.mapX * 73856093) ^ (hit.mapY * 19349663)) >>> 0;
-      const tint = 0.85 + (cellHash & 255) / 255 * 0.3;
-      const vmortar = wallX % 0.5 < 0.045 ? 0.6 : 1;
+      // Procedural wall texture (src/walltex.js): the theme comes from the cell's map
+      // quadrant; we sample top→bottom down the visible slice so brick courses and plank
+      // seams actually read. wallShade already darkens E/W faces, so on top of its RGB we
+      // only layer the torch flicker and fade toward the fog tone with distance.
+      const theme = themeForCell(hit.mapX, hit.mapY);
       const fog = Math.min(1, Math.pow(dist / MAX_VIEW, 1.3));
-      const light = (hit.side === 1 ? 0.7 : 1) * flicker * tint * vmortar;
+      const TEX_STEP = 2;                              // sample every 2 rows — cheap, still crisp
+      for (let yy = drawStart; yy < drawEnd; yy += TEX_STEP) {
+        const v = clamp01((yy - sliceTop) / lineHeight);
+        const t = wallShade(theme, hit.side, wallX, v);
+        ctx.fillStyle = rgb(
+          t[0] * flicker * (1 - fog) + FOG[0] * fog,
+          t[1] * flicker * (1 - fog) + FOG[1] * fog,
+          t[2] * flicker * (1 - fog) + FOG[2] * fog);
+        ctx.fillRect(x, yy, 1, Math.min(TEX_STEP, drawEnd - yy));
+      }
 
-      const base = WALL_COLORS[hit.wall] || WALL_COLORS[1];
-      // Fade the lit colour toward the sickly fog tone with distance (not toward black).
-      ctx.fillStyle = rgb(
-        base[0] * light * (1 - fog) + FOG[0] * fog,
-        base[1] * light * (1 - fog) + FOG[1] * fog,
-        base[2] * light * (1 - fog) + FOG[2] * fog);
-      ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
-
-      // Brick courses + a band of ground ambient occlusion (only when the slice is tall).
+      // A band of ground ambient occlusion at the wall's foot (only when the slice is tall).
       if (drawEnd - drawStart > 6) {
-        ctx.fillStyle = "rgba(0,0,0,0.28)";
-        for (let c = 1; c < 4; c++) {
-          const my = Math.floor(sliceTop + (c / 4) * lineHeight);
-          if (my > drawStart && my < drawEnd) ctx.fillRect(x, my, 1, 1);
-        }
         const aoH = Math.max(1, (drawEnd - drawStart) * 0.06);
         ctx.fillStyle = "rgba(0,0,0,0.35)";
         ctx.fillRect(x, drawEnd - aoH, 1, aoH);
@@ -661,9 +772,7 @@
 
     drawDecals();
     drawBoards();
-    drawCorpses();
-    drawPowerUps();
-    drawZombies();
+    drawSprites();                 // props + corpses + power-ups + zombies + bolts, depth-sorted
     drawParticles();
     ctx.restore();                 // end the world-shake layer; UI below is steady
 
@@ -680,60 +789,126 @@
     drawMinimap();
   }
 
-  // Billboard zombies as a hunched humanoid silhouette (head, shoulders, dangling arms,
-  // legs), depth-clipped per column. White flash on a fresh hit; a slow lurching sway.
-  function drawZombies() {
-    for (const p of projectSprites(player, FOV, W, H, zombies)) {
-      const z = p.sprite;
-      const top = p.drawStartY, h = p.drawEndY - p.drawStartY;
-      const fullW = p.scale * 0.5;
-      const left = Math.floor(p.screenX - fullW / 2);
-      const right = Math.ceil(p.screenX + fullW / 2);
-      const span = right - left;
-      const sway = Math.sin(nowMs * 0.005 + z.id * 1.7) * 0.06;   // lurch in u-space
-      const fog = Math.max(0.25, 1 - p.depth / MAX_VIEW);
-      const flash = nowMs - (hitFlash[z.id] || -1e9) < 110;
-      const body = flash ? [235, 238, 235] : [66, 92, 60];        // rotting greens, or
-      const limb = flash ? [220, 224, 220] : [52, 70, 48];        // near-white on a hit
-      const head = flash ? [240, 240, 235] : [120, 118, 96];
+  // Per-zombie procedural art (src/zombieArt.js) is deterministic from the zombie id;
+  // cache the sprite so we hash each zombie's look only once, not every frame.
+  function zombieSpriteFor(id) {
+    return zart[id] || (zart[id] = zombieSprite(id));
+  }
 
-      for (let x = left; x < right; x++) {
-        if (x < 0 || x >= W || p.depth >= zbuffer[x]) continue;   // wall occludes
-        const u = (span <= 1 ? 0.5 : (x - left) / span) - sway;
-        if ((u > 0.34 && u < 0.46) || (u > 0.54 && u < 0.66)) {   // legs
-          const s = fog * 0.8;
-          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
-          ctx.fillRect(x, top + h * 0.62, 1, h * 0.38);
-        }
-        if ((u > 0.16 && u < 0.30) || (u > 0.70 && u < 0.84)) {   // dangling arms
-          const s = fog * 0.85;
-          ctx.fillStyle = rgb(limb[0] * s, limb[1] * s, limb[2] * s);
-          ctx.fillRect(x, top + h * 0.26, 1, h * 0.34);
-        }
-        if (u > 0.30 && u < 0.70) {                               // hunched torso
-          const s = (0.7 + 0.3 * (1 - Math.abs(u - 0.5) * 2)) * fog;
-          ctx.fillStyle = rgb(body[0] * s, body[1] * s, body[2] * s);
-          ctx.fillRect(x, top + h * 0.22, 1, h * 0.42);
-        }
-        if (u > 0.40 && u < 0.60) {                               // head
-          ctx.fillStyle = rgb(head[0] * fog, head[1] * fog, head[2] * fog);
-          ctx.fillRect(x, top + h * 0.04, 1, h * 0.20);
-        }
+  // All world billboards (static buyable machines, corpses, power-up drops, zombies, and
+  // Ray-Gun bolts) share one depth-sorted pass so a nearer one correctly occludes a
+  // farther one. We project each, cull anything behind the camera, sort far → near
+  // (painter's algorithm), then hand each to its painter. Per-column wall occlusion still
+  // happens inside each painter via the z-buffer.
+  function drawSprites() {
+    const items = [];
+    for (const prop of worldProps(LEVEL, world)) items.push({ paint: paintProp, data: prop });
+    for (const c of corpses) items.push({ paint: paintCorpse, data: c });
+    for (const d of powerUps) items.push({ paint: paintPowerUp, data: d });
+    for (const z of zombies) items.push({ paint: paintZombie, data: z });
+    for (const b of bolts) items.push({ paint: paintBolt, data: b });
+    const drawn = [];
+    for (const it of items) {
+      const pr = projectSprite(player, FOV, W, H, it.data);
+      if (pr.visible) drawn.push({ it, pr });
+    }
+    drawn.sort((a, b) => b.pr.depth - a.pr.depth);
+    for (const { it, pr } of drawn) it.paint(it.data, pr);
+  }
+
+  // Billboard one zombie as a procedural decal figure: src/zombieArt.zombieBands turns the
+  // cached sprite + a shamble phase into a normalised draw-list (head/torso/arm/legs/gore
+  // bands). A fresh hit flashes the whole figure near-white; the glowing eyes stay.
+  function paintZombie(z, p) {
+    const top = p.drawStartY, h = p.drawEndY - p.drawStartY;
+    const fullW = p.scale * 0.5;
+    const left = p.screenX - fullW / 2;
+    const fog = Math.max(0.25, 1 - p.depth / MAX_VIEW);
+    const flash = nowMs - (hitFlash[z.id] || -1e9) < 110;
+    const phase = nowMs * 0.004 + z.id * 1.7;            // continuous gait phase, offset per zombie
+    const { sway, bands } = zombieBands(zombieSpriteFor(z.id), phase);
+    for (const band of bands) {
+      const col = flash ? [236, 238, 236] : band.color;  // near-white wash on a fresh hit
+      const shade = band.layer === "legs" ? 0.8 : band.layer === "arm" ? 0.85 : 1;
+      const s = fog * shade;
+      ctx.fillStyle = rgb(col[0] * s, col[1] * s, col[2] * s);
+      const bx0 = Math.floor(left + (band.uMin + sway) * fullW);
+      const bx1 = Math.ceil(left + (band.uMax + sway) * fullW);
+      const by = top + band.vMin * h, bh = Math.max(1, (band.vMax - band.vMin) * h);
+      for (let x = Math.max(0, bx0); x < Math.min(W, bx1); x++) {
+        if (p.depth >= zbuffer[x]) continue;             // wall occludes
+        ctx.fillRect(x, by, 1, bh);
       }
-      // Glowing eyes, locked to the head's swaying centre so they never slide off the face.
-      const cxi = Math.floor(p.screenX);
-      if (!flash && h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
-        const hc = p.screenX + sway * span;          // head centre tracks the same lurch
-        const sep = Math.max(1, fullW * 0.07);       // half the gap between the two eyes
-        const ew = Math.max(1, fullW * 0.05), eh = Math.max(1, h * 0.03);
-        const ey = top + h * 0.12;                   // drop them onto the eye line
-        ctx.fillStyle = "rgba(255,70,45,0.30)";      // dim halo for a sickly glow
-        ctx.fillRect(hc - sep - ew, ey - eh, ew * 2, eh * 3);
-        ctx.fillRect(hc + sep - ew, ey - eh, ew * 2, eh * 3);
-        ctx.fillStyle = "#ff3024";                   // hot pupils, mirrored about the centre
-        ctx.fillRect(hc - sep - ew, ey, ew, eh);
-        ctx.fillRect(hc + sep, ey, ew, eh);
+    }
+    // Glowing eyes, locked to the head's swaying centre so they never slide off the face.
+    const cxi = Math.floor(p.screenX);
+    if (!flash && h > 8 && cxi >= 0 && cxi < W && p.depth < zbuffer[cxi]) {
+      const hc = p.screenX + sway * fullW;
+      const sep = Math.max(1, fullW * 0.07);
+      const ew = Math.max(1, fullW * 0.05), eh = Math.max(1, h * 0.03);
+      const ey = top + h * 0.09;
+      ctx.fillStyle = "rgba(255,70,45,0.30)";
+      ctx.fillRect(hc - sep - ew, ey - eh, ew * 2, eh * 3);
+      ctx.fillRect(hc + sep - ew, ey - eh, ew * 2, eh * 3);
+      ctx.fillStyle = "#ff3024";
+      ctx.fillRect(hc - sep - ew, ey, ew, eh);
+      ctx.fillRect(hc + sep, ey, ew, eh);
+    }
+  }
+
+  // Billboard one buyable machine from src/props: a perk vending machine, the Mystery
+  // Box, or a wall-gun mount. propSprite gives a normalised band list; glowing machines
+  // add a soft accent halo and float a label glyph (?, JUG, weapon name) above them.
+  function paintProp(prop, pr) {
+    const top = pr.drawStartY, h = pr.drawEndY - pr.drawStartY;
+    const fullW = pr.scale * 0.42;                       // machines read a little narrower than a person
+    const left = pr.screenX - fullW / 2;
+    const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+    for (const band of propSprite(prop.kind, prop.palette).bands) {
+      const [r, g, b] = hexRgb(band.color);
+      const by = top + band.vMin * h, bh = Math.max(1, (band.vMax - band.vMin) * h);
+      const bx0 = Math.floor(left + band.uMin * fullW), bx1 = Math.ceil(left + band.uMax * fullW);
+      ctx.fillStyle = rgb(r * fog, g * fog, b * fog);
+      for (let x = Math.max(0, bx0); x < Math.min(W, bx1); x++) {
+        if (pr.depth >= zbuffer[x]) continue;
+        ctx.fillRect(x, by, 1, bh);
       }
+    }
+    if (prop.glow) {                                     // soft accent halo sells the machine's light
+      const [r, g, b] = hexRgb(Array.isArray(prop.palette) ? prop.palette[1] : prop.palette);
+      const gy = top + h * 0.4, gh = h * 0.5;
+      ctx.fillStyle = "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ",0.12)";
+      for (let x = Math.max(0, Math.floor(left)); x < Math.min(W, Math.ceil(left + fullW)); x++) {
+        if (pr.depth >= zbuffer[x]) continue;
+        ctx.fillRect(x, gy, 1, gh);
+      }
+    }
+    const cxi = Math.floor(pr.screenX);
+    if (h > 14 && cxi >= 0 && cxi < W && pr.depth < zbuffer[cxi]) {
+      const label = prop.kind === "mount" && WEAPONS[prop.label] ? WEAPONS[prop.label].name : prop.label;
+      ctx.font = "bold " + Math.max(6, Math.min(12, (h * 0.09) | 0)) + "px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,255,255," + (0.85 * fog).toFixed(2) + ")";
+      ctx.fillText(label, pr.screenX, top - 2);
+      ctx.textAlign = "left";
+    }
+  }
+
+  // Billboard one Ray-Gun bolt as a glowing emerald orb: a soft halo column behind a hot
+  // bright core, depth-clipped against the wall buffer like every other sprite.
+  function paintBolt(bolt, pr) {
+    const cx = pr.screenX, cy = (pr.drawStartY + pr.drawEndY) / 2;
+    const size = Math.max(1.5, pr.scale * 0.05);
+    for (let x = Math.floor(cx - size * 2); x < Math.ceil(cx + size * 2); x++) {
+      if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+      ctx.fillStyle = "rgba(120,255,150,0.22)";
+      ctx.fillRect(x, cy - size * 2, 1, size * 4);
+    }
+    for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
+      if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+      const hh = size * (1 - Math.abs(x - cx) / size);
+      ctx.fillStyle = "rgba(190,255,205,0.95)";
+      ctx.fillRect(x, cy - hh, 1, hh * 2);
     }
   }
 
@@ -803,85 +978,100 @@
   }
 
   // Slain zombies leave a dark mound that collapses to the floor and fades over CORPSE_MS.
-  function drawCorpses() {
-    for (const c of corpses) {
-      const life = (nowMs - c.bornMs) / CORPSE_MS;
-      if (life >= 1) continue;
-      const pr = projectSprite(player, FOV, W, H, c);
-      if (!pr.visible) continue;
-      const h = pr.drawEndY - pr.drawStartY;
-      const fullW = pr.scale * 0.5;
-      const left = Math.floor(pr.screenX - fullW / 2);
-      const right = Math.ceil(pr.screenX + fullW / 2);
-      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
-      const a = (1 - life) * fog;
-      const top = pr.drawStartY + h * (0.55 + 0.4 * life);        // sinks as it fades
-      ctx.fillStyle = "rgba(" + ((58 * fog) | 0) + "," + ((26 * fog) | 0) + "," +
-        ((26 * fog) | 0) + "," + a.toFixed(3) + ")";
-      for (let x = left; x < right; x++) {
-        if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
-        ctx.fillRect(x, top, 1, pr.drawEndY - top);
-      }
+  // Called by drawSprites with the corpse already projected (pr).
+  function paintCorpse(c, pr) {
+    const life = (nowMs - c.bornMs) / CORPSE_MS;
+    if (life >= 1) return;
+    const h = pr.drawEndY - pr.drawStartY;
+    const fullW = pr.scale * 0.5;
+    const left = Math.floor(pr.screenX - fullW / 2);
+    const right = Math.ceil(pr.screenX + fullW / 2);
+    const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+    const a = (1 - life) * fog;
+    const top = pr.drawStartY + h * (0.55 + 0.4 * life);        // sinks as it fades
+    ctx.fillStyle = "rgba(" + ((58 * fog) | 0) + "," + ((26 * fog) | 0) + "," +
+      ((26 * fog) | 0) + "," + a.toFixed(3) + ")";
+    for (let x = left; x < right; x++) {
+      if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+      ctx.fillRect(x, top, 1, pr.drawEndY - top);
     }
   }
 
   // Floating, glowing power-up drops — powerups.js owns the type + lifetime; this only paints
   // a hovering diamond (colour per type), depth-clipped, blinking as the drop nears expiry.
-  function drawPowerUps() {
-    const COLORS = {
-      nuke: [235, 238, 248], maxAmmo: [255, 210, 70],
-      instaKill: [232, 72, 60], doublePoints: [110, 222, 132],
-    };
-    for (const d of powerUps) {
-      const pr = projectSprite(player, FOV, W, H, d);
-      if (!pr.visible) continue;
-      const h = pr.drawEndY - pr.drawStartY;
-      const fullW = pr.scale * 0.5;
-      const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
-      const blink = d.ttl < 3 ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(nowMs * 0.02)) : 1;
-      const size = Math.max(2, fullW * 0.5 * (0.8 + 0.2 * Math.sin(nowMs * 0.006)));
-      const cx = pr.screenX;
-      const cy = pr.drawStartY + h * 0.62 + Math.sin(nowMs * 0.004 + d.x * 2) * h * 0.04;
-      const [r, g, b] = COLORS[d.type] || [255, 255, 255];
-      const a = (fog * blink).toFixed(3);
-      for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
-        if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
-        ctx.fillStyle = "rgba(" + ((r * 0.9) | 0) + "," + ((g * 0.9) | 0) + "," +
-          ((b * 0.9) | 0) + ",0.22)";
-        ctx.fillRect(x, cy - size, 1, size * 2);                  // soft halo column
-        const hh = size * (1 - Math.abs(x - cx) / size);         // diamond core tapers to the edges
-        ctx.fillStyle = "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + "," + a + ")";
-        ctx.fillRect(x, cy - hh, 1, hh * 2);
-      }
+  // Called by drawSprites with the drop already projected (pr).
+  const POWERUP_COLORS = {
+    nuke: [235, 238, 248], maxAmmo: [255, 210, 70],
+    instaKill: [232, 72, 60], doublePoints: [110, 222, 132],
+  };
+  function paintPowerUp(d, pr) {
+    const h = pr.drawEndY - pr.drawStartY;
+    const fullW = pr.scale * 0.5;
+    const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+    const blink = d.ttl < 3 ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(nowMs * 0.02)) : 1;
+    const size = Math.max(2, fullW * 0.5 * (0.8 + 0.2 * Math.sin(nowMs * 0.006)));
+    const cx = pr.screenX;
+    const cy = pr.drawStartY + h * 0.62 + Math.sin(nowMs * 0.004 + d.x * 2) * h * 0.04;
+    const [r, g, b] = POWERUP_COLORS[d.type] || [255, 255, 255];
+    const a = (fog * blink).toFixed(3);
+    for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
+      if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
+      ctx.fillStyle = "rgba(" + ((r * 0.9) | 0) + "," + ((g * 0.9) | 0) + "," +
+        ((b * 0.9) | 0) + ",0.22)";
+      ctx.fillRect(x, cy - size, 1, size * 2);                  // soft halo column
+      const hh = size * (1 - Math.abs(x - cx) / size);         // diamond core tapers to the edges
+      ctx.fillStyle = "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + "," + a + ")";
+      ctx.fillRect(x, cy - hh, 1, hh * 2);
     }
   }
 
+  // First-person weapon: src/viewmodels.js returns a normalised shape-list + muzzle anchor
+  // for whichever gun is active. (0.5,1.0) is bottom-centre; we map that into a panel pinned
+  // to the bottom of the screen that leans toward the cursor and bobs with movement. recoil
+  // is baked into the shape geometry by the module; we only add screen bob + the flash.
   function drawWeapon() {
-    const gunW = W * 0.22, gunH = H * 0.18;
-    const kick = recoil * 6;                              // recoil drops the gun down/back
+    const id = activeId();
+    const vm = viewmodel(id, { recoil });
+    const isRay = id === "raygun";
     const bobX = Math.cos(bobPhase) * (moving ? 2.5 : 0.6);
     const bobY = Math.abs(Math.sin(bobPhase)) * (moving ? 3 : 0.8);
-    const gx = W / 2 + (cursorX - W / 2) * 0.5 + bobX;   // leans toward the cursor + sways
-    const gy = H - gunH + kick + bobY;
+    const panelW = W * 0.5, panelH = H * 0.5;
+    const panelCx = W / 2 + (cursorX - W / 2) * 0.35 + bobX;   // lean toward the cursor + sway
+    const panelBottom = H + 6 + bobY;                          // grip runs just off the bottom edge
+    const mapX = (u) => panelCx + (u - 0.5) * panelW;
+    const mapY = (v) => panelBottom - panelH * (1 - v);
 
-    // Muzzle flash briefly floods the lower scene with warm light.
+    // Muzzle flash floods the lower scene — warm for powder weapons, emerald for the Ray Gun.
     if (muzzleFlash > 0) {
-      ctx.fillStyle = "rgba(255,230,150," + ((muzzleFlash / 0.05) * 0.22).toFixed(3) + ")";
+      ctx.fillStyle = isRay
+        ? "rgba(150,255,170," + ((muzzleFlash / 0.05) * 0.20).toFixed(3) + ")"
+        : "rgba(255,230,150," + ((muzzleFlash / 0.05) * 0.22).toFixed(3) + ")";
       ctx.fillRect(0, H * 0.5, W, H * 0.5);
     }
-    ctx.fillStyle = "#15151b";
-    ctx.fillRect(gx - gunW * 0.22, gy + gunH * 0.10, gunW * 0.44, gunH);   // grip / body
-    ctx.fillStyle = "#23232e";
-    ctx.fillRect(gx - gunW * 0.10, gy - gunH * 0.05, gunW * 0.20, gunH * 0.5); // slide
-    ctx.fillStyle = "#0e0e14";
-    ctx.fillRect(gx - 2.5, gy - gunH * 0.32, 5, gunH * 0.42);              // barrel
-    if (muzzleFlash > 0) {
-      const r = 5 + recoil * 6, fy = gy - gunH * 0.34;
-      const g = ctx.createRadialGradient(gx, fy, 0, gx, fy, r);
-      g.addColorStop(0, "rgba(255,250,210,0.95)");
-      g.addColorStop(1, "rgba(255,170,60,0)");
+
+    for (const s of vm.shapes) {
+      ctx.fillStyle = s.color;
+      if (s.glow) { ctx.save(); ctx.shadowColor = s.color; ctx.shadowBlur = 12; }
+      if (s.type === "rect") {
+        ctx.fillRect(mapX(s.x), mapY(s.y), s.w * panelW, s.h * panelH);
+      } else if (s.type === "poly") {
+        ctx.beginPath();
+        s.points.forEach(([px, py], i) =>
+          i ? ctx.lineTo(mapX(px), mapY(py)) : ctx.moveTo(mapX(px), mapY(py)));
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (s.glow) ctx.restore();
+    }
+
+    if (muzzleFlash > 0 && vm.muzzle) {                        // hot flash at the barrel tip
+      const fx = mapX(vm.muzzle.x), fy = mapY(vm.muzzle.y);
+      const r = 5 + recoil * 6;
+      const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, r);
+      if (isRay) { g.addColorStop(0, "rgba(210,255,220,0.95)"); g.addColorStop(1, "rgba(60,220,110,0)"); }
+      else { g.addColorStop(0, "rgba(255,250,210,0.95)"); g.addColorStop(1, "rgba(255,170,60,0)"); }
       ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(gx, fy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(fx, fy, r, 0, Math.PI * 2); ctx.fill();
     }
   }
 
@@ -1053,8 +1243,9 @@
   const STEP = 1 / 60;
 
   function updateHud() {
-    const a = player.ammo[player.weapon];
-    const w = WEAPONS[player.weapon];
+    const id = activeId();                               // two-slot loadout: read the active gun
+    const a = player.ammo[id];
+    const w = WEAPONS[id];
     const reloading = player.reloadTimer !== undefined;
     // Round readout: count during a round, countdown to the next during intermission.
     roundEl.innerHTML = spawnState.phase === "intermission"
@@ -1070,8 +1261,20 @@
     reserveEl.textContent = "/ " + a.reserve;
     weaponEl.textContent = w.name + (reloading ? " — RELOADING" : a.mag === 0 ? " — RELOAD (R)" : "");
     ammoEl.classList.toggle("empty", a.mag === 0 && !reloading);
+    // Stowed slot: show the holstered gun (Q / wheel to swap), or nothing in an empty slot.
+    const stowedId = player.loadout.slots[1 - player.loadout.active];
+    stowedEl.textContent = stowedId ? "[" + WEAPONS[stowedId].name + "]" : "";
     // Classic Nacht has no health bar — the screen edges bleed when you're low.
     lowhpEl.classList.toggle("show", player.hp > 0 && player.hp / player.maxHp < 0.34);
+    // Perk row: one coloured badge per owned perk (src/perks.perkBadges, canonical order).
+    const badges = perkBadges(player);
+    if (badges.length !== perkBadgeCount) {              // only re-render the DOM when it changes
+      perksEl.innerHTML = badges
+        .map((b) => '<span class="perk" style="background:' + b.color + '" title="' +
+                    b.label + '">' + b.badge + "</span>")
+        .join("");
+      perkBadgeCount = badges.length;
+    }
     // Buy prompt: interact.findInteractable surfaces the nearest in-reach buyable; grey it
     // out (CSS .poor) when the player can't afford it yet so intent stays readable.
     if (buyTarget) {

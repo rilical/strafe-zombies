@@ -125,9 +125,43 @@ WebAudio side-effects:
   helper). `index.html` owns a lazily-created `AudioContext` and a `playSfx(name)` that turns
   each layer into an oscillator (or low-pass-filtered white noise) following the breakpoint
   curves, called at the shoot/reload/hit/headshot/kill/buy/deny/door/hurt/groan/roundstart/
-  powerup/nuke seams. No audio files — every voice is synthesised live.
+  powerup/nuke seams — plus the Batch 6 voices: `snarl` (spawn), `death` (kill), an ambient
+  `groan` on a wandering timer, and the three Perk-a-Cola jingles on a perk buy. No audio
+  files — every voice is synthesised live.
 
-### `index.html`
+### Procedural polish — `loadout.js`, `weapons.js`/`projectiles.js`, `viewmodels.js`, `zombieArt.js`, `props.js`, `walltex.js`, `perks.js`
+The Batch 6 look-and-feel layer. Every module is pure, dependency-free, unit-tested, and asset-free
+(procedural canvas + WebAudio only); `index.html` wires each at one seam:
+- `loadout.js` — a two-slot weapon inventory: `createLoadout`, `equip(loadout, id) → { loadout,
+  replaced }`, `swap`, `activeWeapon`. `player.loadout` replaces the old `player.weapon` string;
+  `activeId()` reads the held gun, **Q / mouse-wheel** swap (cancelling any reload), and a buy/box
+  routes its grant through `equip`. The HUD shows the active mag + the stowed gun.
+- `weapons.js` + `projectiles.js` — the richer arsenal (Trench gun, BAR, and the box-only **Ray
+  Gun**) plus bolt physics: `spawnBolt`/`stepBolt`/`boltHitsWall`/`splashTargets`. Firing the Ray
+  Gun (`weapon.projectile`) launches a travelling bolt instead of a hitscan; `index.html` advances
+  each bolt per frame and detonates it on a wall/at max range, applying `shooting.applyDamage` +
+  `scoreForHit` to everything in the splash radius (no new rule in the glue).
+- `viewmodels.js` — `viewmodel(weaponId, { recoil }) → { shapes, muzzle }`, a normalised
+  first-person descriptor per gun. `drawWeapon` maps the shapes into a bottom-centre panel that
+  leans toward the cursor and bobs; the Ray Gun's `glow` shapes get an emerald muzzle flash.
+- `zombieArt.js` — `zombieSprite(seed)` (deterministic mulberry32 look: skin/shirt/pants + gore
+  variants) and `zombieBands(sprite, phase) → { sway, bands }` (an animated shamble draw-list).
+  `paintZombie` caches one sprite per zombie id and paints its bands depth-clipped; the glowing
+  eyes and white hit-flash are kept.
+- `props.js` — `worldProps(level, world)` lists the buyable machines (perk colas, Mystery Box, wall
+  mounts) as in-world billboards and `propSprite(kind, palette)` draws each. This fixes the
+  previously invisible machines: they now render as labelled, glowing props depth-sorted in with
+  the actors.
+- `walltex.js` — `themeForCell(cx, cy)` picks a per-room theme (brick / concrete / planks / blood)
+  and `wallShade(theme, side, u, v) → [r,g,b]` shades each wall texel. The raycaster samples it
+  top→bottom down every wall column (E/W faces auto-darkened), then layers torch flicker + fog.
+- `perks.js` (extended) — `perkBadges(player)` returns the owned perks as `{ id, color, badge,
+  label }` in canonical order; the HUD renders a coloured badge row from it.
+
+All world billboards (props + corpses + power-up drops + zombies + Ray-Gun bolts) now share one
+depth-sorted `drawSprites()` pass so a nearer sprite correctly occludes a farther one.
+
+
 - Owns player state, the input map, the rAF loop, and all drawing.
 - Calls only pure functions from `src/`; holds no game *rules* itself beyond wiring.
 

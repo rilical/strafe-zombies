@@ -23,8 +23,9 @@ npm run serve        # python3 -m http.server 8731
 # then visit http://localhost:8731/index.html
 ```
 
-**Controls:** `W`/`A`/`S`/`D` move · mouse aims the gun · screen edges turn · click / hold to
-shoot · `R` reload · `F` buy (wall guns, perks, the Mystery Box, and debris doors).
+**Controls:** `W`/`A`/`S`/`D` move (`A`/`D` strafe) · mouse aims the gun · screen edges turn · click /
+hold to shoot · `R` reload · `Q` / mouse-wheel swap between your two weapons · `F` buy (wall guns,
+perks, the Mystery Box, and debris doors).
 
 ## Develop it
 
@@ -96,6 +97,11 @@ tracker, and the ordered roadmap lives in [`docs/prd.md`](docs/prd.md). Progress
 - [x] Fully procedural sound — synthesised live in WebAudio, no audio files (`sfx.js`)
 - [x] Boarded-window siege — zombies tear the planks off and climb in; press `F` to re-board for points (`barricades.js`)
 - [x] Minimap buyables — wall-guns, the box, perks, and doors flagged on the radar (`markers.js`)
+- [x] Procedural polish — two-weapon loadout + swap (`loadout.js`), a bigger arsenal with the
+  box-only **Ray Gun** and travelling bolts (`weapons.js`/`projectiles.js`), per-gun first-person
+  viewmodels (`viewmodels.js`), decal-style procedural zombies (`zombieArt.js`), visible buyable
+  machines (`props.js`), per-room textured walls (`walltex.js`), perk badges on the HUD
+  (`perks.js`), and zombie snarls/death + Perk-a-Cola jingles (`sfx.js`)
 
 ## License
 
