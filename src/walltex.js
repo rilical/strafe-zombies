@@ -77,9 +77,10 @@ function sampleBrick(u, v) {
 
   if (isMortar) {
     // Dark recessed mortar: the joint sits in shadow between the brick faces, so it reads
-    // *darker* than the lit brick body (not a pale glowing line).
-    const m = clamp255(72 + grain * 0.5);
-    return [m, m, m];
+    // *darker* than the lit brick body (not a pale glowing line). A faint warm tint keeps it
+    // reading as grimy brick-dust grout rather than clean neutral concrete.
+    const m = 72 + grain * 0.5;
+    return [clamp255(m + 8), clamp255(m), clamp255(m - 6)];
   }
   // Warm red brick body; slight brick-to-brick colour variation
   const brickVar = (noise(u, v, 10, courses, 7) - 0.5) * 30;
