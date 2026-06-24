@@ -23,9 +23,19 @@ npm run serve        # python3 -m http.server 8731
 # then visit http://localhost:8731/index.html
 ```
 
-**Controls:** `W`/`A`/`S`/`D` move (`A`/`D` strafe) · mouse aims the gun · screen edges turn · click /
-hold to shoot · `R` reload · `Q` / mouse-wheel swap between your two weapons · `F` buy (wall guns,
-perks, the Mystery Box, and debris doors).
+**Controls**
+
+| Input | Action |
+|---|---|
+| `W` `S` | Move forward / back |
+| `A` `D` | Strafe left / right — kite the horde (the core mechanic) |
+| Mouse | Aim the gun; push the cursor to a screen edge to turn |
+| `←` `→` | Turn the view |
+| Click / hold | Shoot — autos fire while held, semi-autos once per click |
+| `R` | Reload |
+| `Q` / mouse-wheel | Swap between your two weapon slots |
+| `F` | Buy — wall guns, Perk-a-Colas, the Mystery Box, debris doors |
+| `Enter` / click | Restart after a game over |
 
 ## Develop it
 
@@ -43,7 +53,7 @@ pipeline). That makes it the perfect baseplate: visually striking, yet small eno
 that every gameplay addition is a clean, reviewable pull request.
 
 The **core mechanic is strafing**. Zombies are slow but relentless and approach in
-numbers; you survive by circle-strafing — moving sideways (`Q`/`E`) to keep distance
+numbers; you survive by circle-strafing — moving sideways (`A`/`D` strafe) to keep distance
 and line up shots — not by running in straight lines. The whole game is designed
 around making that one mechanic feel good.
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>STRAFE — Nacht (MVP kill loop)</title>
+<title>STRAFE — a survival zombies raycaster</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #screen {
@@ -93,12 +93,45 @@
   <div id="crt"></div>
 
   <script type="module">
-  // ---------------------------------------------------------------------------
-  // index.html is the *integration layer*: input, rendering, and the game loop.
-  // It contains NO game rules — every rule (chase, fire cadence, hit detection,
-  // damage, scoring, projection) lives in the unit-tested pure modules in src/.
-  // This file only wires those functions to the canvas and keyboard/mouse.
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  //  STRAFE — a survival zombies raycaster · the playable client
+  // ===========================================================================
+  //  This single file is the INTEGRATION LAYER: it owns input, rendering, and the
+  //  game loop — and nothing else. Every game *rule* (enemy chase + pathfinding,
+  //  fire cadence, hit detection, damage, scoring, the economy, spawning, sprite
+  //  projection) lives in the small, pure, unit-tested modules under src/ that are
+  //  imported just below. Here we only wire those functions to the <canvas>, the
+  //  keyboard, and the mouse. Rule of thumb: if you're about to encode a game rule
+  //  in this file, it belongs in a src/ module with a test instead.
+  //
+  //  RUN IT — no build step, no assets, no runtime dependencies:
+  //    • open index.html directly in a browser, or
+  //    • `npm run serve`, then visit http://localhost:8731/index.html
+  //      (serving sidesteps browsers that block ES-module loads over file://).
+  //
+  //  CONTROLS
+  //    W / S          move forward / back
+  //    A / D          strafe left / right — kite the horde (the core mechanic)
+  //    mouse          aim the gun; pushing the cursor to a screen edge turns you
+  //    ← / →          turn the view
+  //    click / hold   shoot (autos fire while held, semi-autos once per click)
+  //    R              reload
+  //    Q / wheel      swap between your two weapon slots
+  //    F              buy — wall guns, Perk-a-Colas, the Mystery Box, debris doors
+  //    Enter / click  restart after a game over
+  //
+  //  HOW THIS FILE IS LAID OUT (top → bottom)
+  //    <style> + DOM chrome (above) .. HUD, crosshair, low-HP vignette, CRT scanlines
+  //    imports ....................... every pure system this client drives
+  //    procedural audio .............. WebAudio voices synthesised live (no files)
+  //    tunables ...................... presentation + contact feel only
+  //    game state + reset() .......... the single home for mutable state
+  //    input ......................... keyboard / mouse → intent
+  //    weapon & buying seams ......... compose player state → call src/ → write back
+  //    simulate(dt) .................. fixed-timestep update (every rule comes from src/)
+  //    render() + paint helpers ...... walls, billboards, decals, weapon, minimap
+  //    frame() ....................... the requestAnimationFrame loop
+  // ===========================================================================
   import { castRay, moveWithCollision } from "./src/engine.js";
   import { LEVEL } from "./src/level.js";
   import { createWorld, isBlocked, openDoor, tearBoard, repairBoard } from "./src/barriers.js";
@@ -123,7 +156,7 @@
   import { buyableMarkers } from "./src/markers.js";
   import { windowPoints, pickWindow, tickBreak, findRepairableWindow,
            REPAIR_REWARD, MAX_BOARDS } from "./src/barricades.js";
-  // Batch 6 — procedural polish: two-slot loadout, weapon viewmodels, Ray-Gun bolts,
+  // Procedural-polish layer: two-slot loadout, weapon viewmodels, Ray-Gun bolts,
   // decal zombies, visible buyable machines, and procedurally textured walls.
   import { createLoadout, equip, swap, activeWeapon } from "./src/loadout.js";
   import { viewmodel } from "./src/viewmodels.js";
