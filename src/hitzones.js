@@ -35,3 +35,13 @@ export function isHeadshot(drawStartY, drawEndY, cursorY, opts = {}) {
   // Both band edges are inclusive — grazing the boundary counts as a headshot.
   return cursorY >= topY && cursorY <= botY;
 }
+
+// True when the crosshair's y falls anywhere inside the target's billboard band
+// [drawStartY, drawEndY] — i.e. the shot is vertically on the body, not aimed at the
+// ceiling or floor in the same screen column. Both edges inclusive; false for a
+// degenerate billboard (h <= 0). Lets the integration reject vertical misses before
+// applying the 2D ray/circle damage of shooting.resolveShot.
+export function isBodyHit(drawStartY, drawEndY, cursorY) {
+  if (drawEndY - drawStartY <= 0) return false;
+  return cursorY >= drawStartY && cursorY <= drawEndY;
+}

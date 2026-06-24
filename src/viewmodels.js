@@ -158,8 +158,12 @@ const WEAPONS = {
  * @throws {RangeError} if weaponId is not recognised
  */
 export function viewmodel(weaponId, frame = {}) {
+  // Own-property check so inherited names (__proto__, toString, …) are rejected as unknown
+  // ids rather than returning a truthy prototype member and crashing on def.shapes later.
+  if (!Object.prototype.hasOwnProperty.call(WEAPONS, weaponId)) {
+    throw new RangeError(`Unknown weapon id: "${weaponId}"`);
+  }
   const def = WEAPONS[weaponId];
-  if (!def) throw new RangeError(`Unknown weapon id: "${weaponId}"`);
 
   const recoil = frame.recoil ?? 0;
   const bob    = frame.bob ?? { x: 0, y: 0 };

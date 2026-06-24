@@ -107,7 +107,9 @@ describe('wallShade — brick mortar courses', () => {
   // Sample brightness across v at fixed u=0.5; the brick pattern must produce
   // at least 2 clear dips (mortar lines) in 32 samples across [0,1].
   it('has periodic mortar dips across v (at least 2 dark courses in 32 samples)', () => {
-    const u = 0.5;
+    // u=0.15 sits mid-brick on BOTH even and odd courses (off the staggered vertical
+    // joints), so the only dips are the horizontal mortar bands — one per course.
+    const u = 0.15;
     const samples = 32;
     const brightnesses = [];
     for (let i = 0; i < samples; i++) {
@@ -122,8 +124,10 @@ describe('wallShade — brick mortar courses', () => {
   });
 
   it('mortar dips are periodic — repeats at least once across v', () => {
-    // Check that the minimum-brightness positions are roughly evenly spaced
-    const u = 0.5;
+    // Check that the minimum-brightness positions are roughly evenly spaced.
+    // u=0.15 stays mid-brick on both course parities so only the 5 horizontal
+    // mortar bands register — evenly spaced — instead of the vertical joints.
+    const u = 0.15;
     const N = 64;
     const bri = [];
     for (let i = 0; i < N; i++) {
@@ -152,6 +156,15 @@ describe('wallShade — brick mortar courses', () => {
       const maxGap = Math.max(...gaps);
       expect(maxGap / minGap).toBeLessThan(2.0); // within 2× period spread
     }
+  });
+
+  it('renders the mortar groove darker than the lit brick face (recessed, not glowing)', () => {
+    // Brick body: u=0.25 sits mid-brick on an even course; v=0.45 is below the mortar band.
+    const [br, bg, bb] = wallShade('brick', 0, 0.25, 0.45);
+    // Mortar: v=0.18 is inside the top mortar band of course 0; u=0.25 keeps us off a vertical joint.
+    const [mr, mg, mb] = wallShade('brick', 0, 0.25, 0.18);
+    // A real mortar joint is recessed and reads darker than the brick face it sits between.
+    expect(mr + mg + mb).toBeLessThan(br + bg + bb);
   });
 });
 

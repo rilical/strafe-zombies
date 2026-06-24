@@ -57,12 +57,16 @@ export function worldProps(level, _world) {
   });
 
   // Wall-gun mounts — label is the weapon id so the HUD/buy prompt can display it.
+  // The mount cell itself is solid wall, so the billboard is pushed half a cell out along
+  // faceX/faceY onto the wall face the player actually sees (mirrors how index.html places
+  // boarded-window planks). Without this the prop renders inside its own wall and the
+  // depth test hides it.
   for (const m of level.mounts) {
     props.push({
       kind:    'mount',
       id:      m.id,
-      x:       m.cx + 0.5,
-      y:       m.cy + 0.5,
+      x:       m.cx + 0.5 + (m.faceX ?? 0) * 0.5,
+      y:       m.cy + 0.5 + (m.faceY ?? 0) * 0.5,
       palette: ['#2b2f36', '#6b7280'], // [gunmetal base, steel accent]
       label:   m.weaponId,
       glow:    false,

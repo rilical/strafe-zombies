@@ -211,13 +211,14 @@ describe("tickBreak", () => {
     expect(result.tearTimer).toBe(0);
   });
 
-  it("never lets boards go below 0 (returns 0, not negative)", () => {
-    // Pass boards=0 — nothing to pop
+  it("treats an already-open window (boards=0) as broken immediately", () => {
+    // PR#27 P1: pickWindow can hand back an already-open window. A caller that spawns a
+    // breaking zombie there and waits for `broken` before chasing must not hang, so boards=0
+    // reports broken at once — nothing to pop, timer cleared.
     const result = tickBreak(0, 0, TEAR_SECS * 3);
     expect(result.tears).toBe(0);
-    expect(result.broken).toBe(false); // 0 was already open; we don't re-flag it
-    // tearTimer accumulates normally since nothing was popped
-    expect(result.tearTimer).toBeCloseTo(TEAR_SECS * 3);
+    expect(result.broken).toBe(true);
+    expect(result.tearTimer).toBe(0);
   });
 
   it("carries leftover time forward", () => {

@@ -56,12 +56,15 @@ describe('worldProps — positions', () => {
     expect(box.y).toBeCloseTo(FIXTURE.box.cy + 0.5);
   });
 
-  it('each mount prop sits at cx+0.5, cy+0.5', () => {
+  it('each mount prop sits on its visible wall face (cx+0.5 + faceX/2, cy+0.5 + faceY/2)', () => {
+    // Mount cells are solid wall; the billboard must sit on the face the player can see,
+    // nudged out of the wall by half a cell along faceX/faceY — otherwise paintProp's
+    // z-buffer test hides it behind its own wall.
     const props = worldProps(FIXTURE, WORLD);
     for (const m of FIXTURE.mounts) {
       const prop = props.find(p => p.id === m.id);
-      expect(prop.x).toBeCloseTo(m.cx + 0.5);
-      expect(prop.y).toBeCloseTo(m.cy + 0.5);
+      expect(prop.x).toBeCloseTo(m.cx + 0.5 + m.faceX * 0.5);
+      expect(prop.y).toBeCloseTo(m.cy + 0.5 + m.faceY * 0.5);
     }
   });
 });

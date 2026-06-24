@@ -108,7 +108,7 @@
   import { WEAPONS, fire as fireWeapon, startReload, tickReload,
            buyWallWeapon, rollMysteryBox } from "./src/weapons.js";
   import { resolveShot, shootRay, applyDamage, scoreForHit } from "./src/shooting.js";
-  import { isHeadshot } from "./src/hitzones.js";
+  import { isHeadshot, isBodyHit } from "./src/hitzones.js";
   import { applyContactDamage, regen, isGameOver } from "./src/survival.js";
   import { earn, spend } from "./src/economy.js";
   import { PERKS, grantPerk, effectiveMaxHp, effectiveRpm, effectiveReloadMs, perkBadges } from "./src/perks.js";
@@ -369,17 +369,22 @@
   // opens the door. No buy rules live here — index.html only sequences the pure calls.
   function tryBuy() {
     const it = findInteractable(LEVEL, world, player);
-    if (!it) {                                        // no buyable in reach — maybe a window to re-board?
+    // When the buy can't proceed — nothing in reach, or the in-reach buyable is unaffordable —
+    // fall back to re-boarding a damaged window if one is in range. A torn window can overlap an
+    // unaffordable machine (e.g. a perk you can't yet afford), and the repair must still win over
+    // a bare deny so the player isn't locked out of barricading.
+    if (!it || player.points < it.cost) {
       const win = findRepairableWindow(LEVEL, world, player);
       if (win) {
         world = repairBoard(world, win.id);           // nail one plank back on
         player = earn(player, REPAIR_REWARD);         // Nacht pays you to barricade
         flashBuy("+" + REPAIR_REWARD + " REPAIR");
         playSfx("buy");
+        return;
       }
+      if (it) playSfx("deny");                        // unaffordable buyable, no window to repair
       return;
     }
-    if (player.points < it.cost) { playSfx("deny"); return; }   // in reach but can't afford
     const paid = spend(player, it.cost);
     if (!paid.ok) { playSfx("deny"); return; }
     player = paid.player;
@@ -425,7 +430,10 @@
     zombies = zombies.map((z) => {
       const t = targets.find((q) => q.id === z.id);
       if (!t) return z;
-      const damaged = applyDamage(z, t.damage);
+      // Insta-Kill makes any hit lethal — match the hitscan path so high-HP zombies (round 10+,
+      // 1000+ HP) don't shrug off a Ray-Gun bolt. z.hp guarantees applyDamage clamps to 0.
+      const dmg = activePowerUps.instaKill > 0 ? z.hp : t.damage;
+      const damaged = applyDamage(z, dmg);
       const killed = z.hp > 0 && damaged.hp === 0;
       const award = scoreForHit(z, killed, false) * ptMult;
       gain += award;
@@ -520,15 +528,23 @@
           // judges WHERE on it the crosshair sits — index.html just wires them together.
           const ca = Math.cos(aimAngle), sa = Math.sin(aimAngle);
           const target = shootRay(dynMap, player.x, player.y, ca, sa, zombies);
-          let headshot = false;
+          let headshot = false, bodyHit = true;
           if (target) {
             const tp = projectSprite(player, FOV, W, H, target.zombie);
-            if (tp.visible) headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
+            if (tp.visible) {
+              headshot = isHeadshot(tp.drawStartY, tp.drawEndY, cursorY);
+              bodyHit  = isBodyHit(tp.drawStartY, tp.drawEndY, cursorY);
+            }
           }
           // Insta-Kill (a timed power-up) makes any hit lethal by overriding the gun's damage;
           // the kill still scores through resolveShot's normal kill bonus.
           const shotWeapon = activePowerUps.instaKill > 0 ? { ...weapon, damage: 100000 } : weapon;
-          const res = resolveShot(dynMap, player, zombies, shotWeapon, aimAngle, { headshot });
+          // A shot aligned with a zombie's column but aimed above its head or below its feet
+          // (at the ceiling/floor) is a vertical miss: resolveShot's flat ray/circle would still
+          // register a hit, so gate it out and let the bullet bite the wall behind instead.
+          const res = (target && !bodyHit)
+            ? { hitId: null, killedId: null, scoreDelta: 0, headshot: false, zombies }
+            : resolveShot(dynMap, player, zombies, shotWeapon, aimAngle, { headshot });
           if (res.hitId != null) {
             // res.hitId names the exact zombie the bullet struck — no hp-diff guessing.
             const hz = res.zombies.find((z) => z.id === res.hitId);
@@ -864,13 +880,17 @@
     const fullW = pr.scale * 0.42;                       // machines read a little narrower than a person
     const left = pr.screenX - fullW / 2;
     const fog = Math.max(0.25, 1 - pr.depth / MAX_VIEW);
+    // A wall-gun mount sits ON its wall face, so its depth ties the wall's own column; allow a
+    // small tolerance there (as the boarded-window painter does) so it isn't culled by its own
+    // wall. Free-standing perk/box machines keep the strict test.
+    const occluded = (x) => pr.depth >= zbuffer[x] + (prop.kind === "mount" ? 0.3 : 0);
     for (const band of propSprite(prop.kind, prop.palette).bands) {
       const [r, g, b] = hexRgb(band.color);
       const by = top + band.vMin * h, bh = Math.max(1, (band.vMax - band.vMin) * h);
       const bx0 = Math.floor(left + band.uMin * fullW), bx1 = Math.ceil(left + band.uMax * fullW);
       ctx.fillStyle = rgb(r * fog, g * fog, b * fog);
       for (let x = Math.max(0, bx0); x < Math.min(W, bx1); x++) {
-        if (pr.depth >= zbuffer[x]) continue;
+        if (occluded(x)) continue;
         ctx.fillRect(x, by, 1, bh);
       }
     }
@@ -879,12 +899,12 @@
       const gy = top + h * 0.4, gh = h * 0.5;
       ctx.fillStyle = "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ",0.12)";
       for (let x = Math.max(0, Math.floor(left)); x < Math.min(W, Math.ceil(left + fullW)); x++) {
-        if (pr.depth >= zbuffer[x]) continue;
+        if (occluded(x)) continue;
         ctx.fillRect(x, gy, 1, gh);
       }
     }
     const cxi = Math.floor(pr.screenX);
-    if (h > 14 && cxi >= 0 && cxi < W && pr.depth < zbuffer[cxi]) {
+    if (h > 14 && cxi >= 0 && cxi < W && !occluded(cxi)) {
       const label = prop.kind === "mount" && WEAPONS[prop.label] ? WEAPONS[prop.label].name : prop.label;
       ctx.font = "bold " + Math.max(6, Math.min(12, (h * 0.09) | 0)) + "px ui-monospace, monospace";
       ctx.textAlign = "center";
@@ -899,12 +919,14 @@
   function paintBolt(bolt, pr) {
     const cx = pr.screenX, cy = (pr.drawStartY + pr.drawEndY) / 2;
     const size = Math.max(1.5, pr.scale * 0.05);
-    for (let x = Math.floor(cx - size * 2); x < Math.ceil(cx + size * 2); x++) {
+    // Clamp loop bounds to the viewport: a sprite near the camera plane has a huge scale, and
+    // an unclamped left→right sweep could iterate millions of off-screen columns in one frame.
+    for (let x = Math.max(0, Math.floor(cx - size * 2)); x < Math.min(W, Math.ceil(cx + size * 2)); x++) {
       if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
       ctx.fillStyle = "rgba(120,255,150,0.22)";
       ctx.fillRect(x, cy - size * 2, 1, size * 4);
     }
-    for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
+    for (let x = Math.max(0, Math.floor(cx - size)); x < Math.min(W, Math.ceil(cx + size)); x++) {
       if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
       const hh = size * (1 - Math.abs(x - cx) / size);
       ctx.fillStyle = "rgba(190,255,205,0.95)";
@@ -991,7 +1013,7 @@
     const top = pr.drawStartY + h * (0.55 + 0.4 * life);        // sinks as it fades
     ctx.fillStyle = "rgba(" + ((58 * fog) | 0) + "," + ((26 * fog) | 0) + "," +
       ((26 * fog) | 0) + "," + a.toFixed(3) + ")";
-    for (let x = left; x < right; x++) {
+    for (let x = Math.max(0, left); x < Math.min(W, right); x++) {   // clamp: near-camera corpse has huge span
       if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
       ctx.fillRect(x, top, 1, pr.drawEndY - top);
     }
@@ -1014,7 +1036,7 @@
     const cy = pr.drawStartY + h * 0.62 + Math.sin(nowMs * 0.004 + d.x * 2) * h * 0.04;
     const [r, g, b] = POWERUP_COLORS[d.type] || [255, 255, 255];
     const a = (fog * blink).toFixed(3);
-    for (let x = Math.floor(cx - size); x < Math.ceil(cx + size); x++) {
+    for (let x = Math.max(0, Math.floor(cx - size)); x < Math.min(W, Math.ceil(cx + size)); x++) {   // clamp to viewport
       if (x < 0 || x >= W || pr.depth >= zbuffer[x]) continue;
       ctx.fillStyle = "rgba(" + ((r * 0.9) | 0) + "," + ((g * 0.9) | 0) + "," +
         ((b * 0.9) | 0) + ",0.22)";

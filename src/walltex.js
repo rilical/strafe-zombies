@@ -76,8 +76,9 @@ function sampleBrick(u, v) {
   const grain = noise(u, v, 40, 40, 1) * 18 - 9; // ±9
 
   if (isMortar) {
-    // Pale grey mortar
-    const m = clamp255(160 + grain * 0.5);
+    // Dark recessed mortar: the joint sits in shadow between the brick faces, so it reads
+    // *darker* than the lit brick body (not a pale glowing line).
+    const m = clamp255(72 + grain * 0.5);
     return [m, m, m];
   }
   // Warm red brick body; slight brick-to-brick colour variation

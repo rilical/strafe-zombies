@@ -72,6 +72,16 @@ describe("regen — delayed health recovery", () => {
     expect(next.hp).toBe(0);
     expect(isGameOver(next)).toBe(true);
   });
+
+  it("interpolates from HP-at-damage and does not compound across ticks", () => {
+    // applyContactDamage stamps the HP at the moment of the hit; regen must anchor its
+    // interpolation there, not on the already-healed hp, or the fixed-step loop heals ~2x fast.
+    const hit = applyContactDamage({ hp: 50, maxHp: 100, lastDamageMs: 0 }, 0, 0);
+    const once = regen(hit, 3500);                 // 2000ms delay + 50% of the 3000ms refill
+    expect(once.hp).toBeCloseTo(75, 6);
+    // Re-running at the SAME timestamp must be idempotent — no compounding.
+    expect(regen(once, 3500).hp).toBeCloseTo(75, 6);
+  });
 });
 
 describe("isGameOver — down state", () => {

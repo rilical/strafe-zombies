@@ -13,9 +13,11 @@ const REGEN_TO_FULL_MS = 3000;
  */
 export function applyContactDamage(player, dmg, nowMs) {
   const damage = Math.max(0, dmg);
+  const hp = Math.max(0, player.hp - damage);
   return {
     ...player,
-    hp: Math.max(0, player.hp - damage),
+    hp,
+    hpAtDamage: hp,        // anchor for regen so recovery interpolates from here, not the healed hp
     lastDamageMs: nowMs,
   };
 }
@@ -37,12 +39,14 @@ export function regen(player, nowMs) {
   if (regenMs === 0) return { ...player, hp: currentHp };
 
   const progress = Math.min(regenMs / REGEN_TO_FULL_MS, 1);
-  const missingHp = maxHp - currentHp;
-  const recoveredHp = currentHp + missingHp * progress;
+  // Interpolate from the HP at the last hit (set by applyContactDamage), not the partially
+  // healed currentHp — otherwise calling regen every fixed-step tick compounds recovery.
+  const fromHp = player.hpAtDamage ?? currentHp;
+  const recoveredHp = fromHp + (maxHp - fromHp) * progress;
 
   return {
     ...player,
-    hp: Math.min(maxHp, recoveredHp),
+    hp: Math.min(maxHp, Math.max(currentHp, recoveredHp)),
   };
 }
 

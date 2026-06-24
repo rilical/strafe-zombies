@@ -39,6 +39,14 @@ describe('viewmodel — unknown id', () => {
   it('throws RangeError for empty string', () => {
     expect(() => viewmodel('')).toThrow(RangeError);
   });
+
+  it('throws RangeError (not TypeError) for inherited Object property names', () => {
+    // WEAPONS[id] would otherwise return a truthy inherited member for these, skip the
+    // RangeError guard, and crash later reading def.shapes.
+    for (const id of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(() => viewmodel(id)).toThrow(RangeError);
+    }
+  });
 });
 
 describe('viewmodel — neutral frame (all 7 weapons)', () => {
