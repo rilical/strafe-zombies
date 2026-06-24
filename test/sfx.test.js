@@ -15,6 +15,12 @@ const REQUIRED_KEYS = [
   "powerup",
   "roundstart",
   "nuke",
+  // Batch 6: richer zombie voices + perk jingles
+  "snarl",
+  "death",
+  "jingleJugg",
+  "jingleSpeed",
+  "jingleDoubleTap",
 ];
 
 const WAVES = new Set(["sine", "square", "sawtooth", "triangle", "noise"]);
@@ -127,6 +133,72 @@ describe("buildVoice", () => {
 
     a.layers[0].gain[0][1] = 0.123;
     expect(b.layers[0].gain[0][1]).not.toBe(0.123);
+  });
+});
+
+describe("zombie voice presets — snarl and death", () => {
+  it("snarl is a short noisy rasp (dur ≤ 0.3) with pitchVariance and a noise layer", () => {
+    expect(SFX.snarl).toBeDefined();
+    expect(SFX.snarl.dur).toBeGreaterThan(0);
+    expect(SFX.snarl.dur).toBeLessThanOrEqual(0.3);
+    expect(SFX.snarl.pitchVariance).toBeDefined();
+    expect(SFX.snarl.pitchVariance).toBeGreaterThan(0);
+    const waveTypes = SFX.snarl.layers.map(l => l.wave);
+    expect(waveTypes).toContain("noise");
+  });
+
+  it("death is a longer descending voice (dur ≥ 0.4) with pitchVariance and a falling pitch layer", () => {
+    expect(SFX.death).toBeDefined();
+    expect(SFX.death.dur).toBeGreaterThanOrEqual(0.4);
+    expect(SFX.death.pitchVariance).toBeDefined();
+    expect(SFX.death.pitchVariance).toBeGreaterThan(0);
+    // At least one layer must have a strictly descending pitch
+    const hasDescending = SFX.death.layers.some(l => l.freq[0][1] > l.freq.at(-1)[1]);
+    expect(hasDescending).toBe(true);
+  });
+
+  it("snarl pitch varies across different rng values", () => {
+    const low = buildVoice("snarl", makeRng([0.05]));
+    const high = buildVoice("snarl", makeRng([0.95]));
+    expect(collectFrequencies(low)).not.toEqual(collectFrequencies(high));
+  });
+
+  it("death pitch varies across different rng values", () => {
+    const low = buildVoice("death", makeRng([0.05]));
+    const high = buildVoice("death", makeRng([0.95]));
+    expect(collectFrequencies(low)).not.toEqual(collectFrequencies(high));
+  });
+
+  it("snarl and death both build into valid voices", () => {
+    expectValidVoice(buildVoice("snarl", makeRng([0.5])));
+    expectValidVoice(buildVoice("death", makeRng([0.5])));
+  });
+});
+
+describe("perk jingle presets", () => {
+  it.each(["jingleJugg", "jingleSpeed", "jingleDoubleTap"])(
+    "%s exists and buildVoice returns a well-formed voice",
+    name => {
+      expect(SFX[name]).toBeDefined();
+      expectValidVoice(buildVoice(name, makeRng([0.5])));
+    },
+  );
+
+  it("jingle output is deterministic given the same seeded rng", () => {
+    for (const name of ["jingleJugg", "jingleSpeed", "jingleDoubleTap"]) {
+      const a = buildVoice(name, makeRng([0.3, 0.7]));
+      const b = buildVoice(name, makeRng([0.3, 0.7]));
+      expect(a).toEqual(b);
+    }
+  });
+
+  it("the three jingles produce distinct frequency sets from each other", () => {
+    const jugg = collectFrequencies(buildVoice("jingleJugg", makeRng([0.5])));
+    const speed = collectFrequencies(buildVoice("jingleSpeed", makeRng([0.5])));
+    const dt = collectFrequencies(buildVoice("jingleDoubleTap", makeRng([0.5])));
+    expect(jugg).not.toEqual(speed);
+    expect(jugg).not.toEqual(dt);
+    expect(speed).not.toEqual(dt);
   });
 });
 

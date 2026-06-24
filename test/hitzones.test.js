@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { HEAD_TOP, HEAD_BOTTOM, isHeadshot } from '../src/hitzones.js';
+import { HEAD_TOP, HEAD_BOTTOM, isHeadshot, isBodyHit } from '../src/hitzones.js';
 
 // A convenient billboard at canvas y=100..500 (height 400 px).
 const START = 100;
@@ -109,5 +109,23 @@ describe('isHeadshot — purity', () => {
   it('works with plain numbers — no object coercion', () => {
     // All args are numbers; function must not access any properties except opts
     expect(typeof isHeadshot(100, 500, 150)).toBe('boolean');
+  });
+});
+
+describe('isBodyHit — vertical billboard overlap', () => {
+  it('is true within the band and inclusive at both edges', () => {
+    expect(isBodyHit(START, END, 300)).toBe(true);   // mid-band
+    expect(isBodyHit(START, END, START)).toBe(true);  // top edge
+    expect(isBodyHit(START, END, END)).toBe(true);    // bottom edge
+  });
+
+  it('is false above the head or below the feet (aiming at ceiling/floor)', () => {
+    expect(isBodyHit(START, END, START - 1)).toBe(false);
+    expect(isBodyHit(START, END, END + 1)).toBe(false);
+  });
+
+  it('is false for a degenerate billboard (h <= 0)', () => {
+    expect(isBodyHit(300, 300, 300)).toBe(false);
+    expect(isBodyHit(400, 300, 350)).toBe(false);
   });
 });

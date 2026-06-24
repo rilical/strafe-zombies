@@ -9,9 +9,9 @@ const SPEED_COLA_RELOAD_MULTIPLIER = 0.5;
 const DOUBLE_TAP_RPM_MULTIPLIER = 1.33;
 
 export const PERKS = Object.freeze({
-  jugg: Object.freeze({ id: JUGG_ID, name: "Juggernog", cost: 2500 }),
-  speedCola: Object.freeze({ id: SPEED_COLA_ID, name: "Speed Cola", cost: 3000 }),
-  doubleTap: Object.freeze({ id: DOUBLE_TAP_ID, name: "Double Tap", cost: 2000 }),
+  jugg: Object.freeze({ id: JUGG_ID, name: "Juggernog", cost: 2500, color: "#c0392b", badge: "JUG", label: "Juggernog" }),
+  speedCola: Object.freeze({ id: SPEED_COLA_ID, name: "Speed Cola", cost: 3000, color: "#2ecc71", badge: "SPD", label: "Speed Cola" }),
+  doubleTap: Object.freeze({ id: DOUBLE_TAP_ID, name: "Double Tap", cost: 2000, color: "#e1b12c", badge: "2X", label: "Double Tap" }),
 });
 
 /**
@@ -61,4 +61,22 @@ export function effectiveReloadMs(player, baseMs) {
  */
 export function effectiveRpm(player, baseRpm) {
   return hasPerk(player, DOUBLE_TAP_ID) ? baseRpm * DOUBLE_TAP_RPM_MULTIPLIER : baseRpm;
+}
+
+// Canonical display order for the perk HUD row and machine color legend.
+const PERK_ORDER = [JUGG_ID, SPEED_COLA_ID, DOUBLE_TAP_ID];
+
+/**
+ * perkBadges(player) -> [{ id, color, badge, label }, ...]
+ *
+ * Returns display metadata for each perk the player owns, in the fixed
+ * canonical order [jugg, speedCola, doubleTap]. Accepts player.perks as a
+ * Set, an Array, or undefined/missing — all map to a plain membership check.
+ */
+export function perkBadges(player) {
+  const owned = player.perks ? new Set(player.perks) : new Set();
+  return PERK_ORDER.filter((id) => owned.has(id)).map((id) => {
+    const { color, badge, label } = PERKS[id];
+    return { id, color, badge, label };
+  });
 }

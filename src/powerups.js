@@ -10,6 +10,12 @@ const FULL_AMMO = {
   kar98k: { mag: 5, reserve: 50 },
   carbine: { mag: 15, reserve: 120 },
   thompson: { mag: 30, reserve: 240 },
+  // Batch 6 box/wall weapons — kept in sync with src/weapons.js WEAPONS (a parity test in
+  // test/powerups.test.js fails if any WEAPONS id is missing here). The Mystery Box can grant
+  // these, so Max Ammo must know how to refill them.
+  trench: { mag: 6, reserve: 48 },
+  bar: { mag: 20, reserve: 200 },
+  raygun: { mag: 20, reserve: 160 },
 };
 
 function typeFromRoll(roll) {

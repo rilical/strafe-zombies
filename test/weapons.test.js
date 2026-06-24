@@ -71,6 +71,44 @@ describe("WEAPONS — locked arsenal data", () => {
         auto: true,
         price: 1200,
       },
+      trench: {
+        id: "trench",
+        name: "Trench Gun",
+        damage: 220,
+        rpm: 75,
+        magSize: 6,
+        reserve: 48,
+        reloadMs: 2600,
+        auto: false,
+        price: 1500,
+      },
+      bar: {
+        id: "bar",
+        name: "B.A.R.",
+        damage: 75,
+        rpm: 500,
+        magSize: 20,
+        reserve: 200,
+        reloadMs: 3000,
+        auto: true,
+        price: 1800,
+      },
+      raygun: {
+        id: "raygun",
+        name: "Ray Gun",
+        damage: 1000,
+        rpm: 120,
+        magSize: 20,
+        reserve: 160,
+        reloadMs: 2500,
+        auto: false,
+        price: 0,
+        boxOnly: true,
+        projectile: true,
+        splash: 2.0,
+        boltSpeed: 12,
+        boltRange: 18,
+      },
     });
   });
 });
@@ -238,6 +276,11 @@ describe("buyWallWeapon — ownership and full ammo", () => {
       hp: 100,
     });
   });
+
+  it("throws a RangeError when the requested weapon is boxOnly (e.g. raygun)", () => {
+    const player = deepFreeze({ weapon: "m1911", ammo: {} });
+    expect(() => buyWallWeapon(player, "raygun")).toThrow(RangeError);
+  });
 });
 
 describe("rollMysteryBox — seedable random grant", () => {
@@ -257,12 +300,35 @@ describe("rollMysteryBox — seedable random grant", () => {
     expect(first.player.points).toBe(950);
   });
 
-  it("maps rng values across the valid weapon ids and clamps the high edge", () => {
+  it("never includes m1911 in the box pool; raygun is accessible at the rare end", () => {
     const player = deepFreeze({ weapon: "m1911", ammo: {} });
+    // Weighted pool: [kar98k×4, carbine×4, thompson×4, trench×4, bar×4, raygun×1] total=21.
+    // rng()=0 → kar98k (first bucket); rng()→1 → raygun (last bucket).
+    expect(rollMysteryBox(player, () => 0).weaponId).toBe("kar98k");
+    expect(rollMysteryBox(player, () => 0.999999).weaponId).toBe("raygun");
 
-    expect(rollMysteryBox(player, () => 0).weaponId).toBe("m1911");
-    expect(rollMysteryBox(player, () => 0.25).weaponId).toBe("kar98k");
-    expect(rollMysteryBox(player, () => 0.5).weaponId).toBe("carbine");
-    expect(rollMysteryBox(player, () => 0.999999).weaponId).toBe("thompson");
+    // Sweep 63 equally-spaced values — m1911 must never appear, raygun must appear.
+    const results = Array.from({ length: 63 }, (_, i) =>
+      rollMysteryBox(player, () => i / 63).weaponId
+    );
+    expect(results).not.toContain("m1911");
+    expect(results).toContain("raygun");
+  });
+
+  it("raygun is rarer than other pool entries (~1/21 weight vs 4/21 each)", () => {
+    const player = deepFreeze({ weapon: "m1911", ammo: {} });
+    const N = 2100;
+    let raygunCount = 0;
+    let seed = 1;
+    const rng = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 2 ** 32;
+    };
+    for (let i = 0; i < N; i++) {
+      if (rollMysteryBox(player, rng).weaponId === "raygun") raygunCount++;
+    }
+    // Expected ~100 (1/21 ≈ 4.76%). Allow ±50 for statistical noise.
+    expect(raygunCount).toBeGreaterThan(50);
+    expect(raygunCount).toBeLessThan(200);
   });
 });

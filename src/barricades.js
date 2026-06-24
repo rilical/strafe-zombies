@@ -100,8 +100,10 @@ export function tickBreak(tearTimer, boards, dt, tearSecs = TEAR_SECS) {
     tears += 1;
   }
 
-  // Once the window is fully torn open, there is no partial timer to preserve.
-  const broken = remaining === 0 && tears > 0;
+  // Broken once no planks remain. remaining starts at `boards`, so a window handed over
+  // already open (boards=0) breaks immediately — a caller that waits for `broken` before
+  // promoting the zombie to chase never hangs (PR#27).
+  const broken = remaining === 0;
   return {
     tearTimer: broken ? 0 : t,
     tears,

@@ -6,6 +6,7 @@ import {
   maybeDrop,
   tickPowerUps,
 } from "../src/powerups.js";
+import { WEAPONS } from "../src/weapons.js";
 
 function deepFreeze(value) {
   Object.freeze(value);
@@ -126,6 +127,40 @@ describe("effect helpers", () => {
     expect(next).not.toBe(player);
     expect(next.ammo).not.toBe(player.ammo);
     expect(player.ammo.carbine).toEqual({ mag: 3, reserve: 9 });
+  });
+
+  it("applyMaxAmmo refills box-rolled weapons (trench/B.A.R./ray gun) without throwing", () => {
+    // Regression: the Mystery Box can grant trench/bar/raygun, so their ids land in
+    // player.ammo. Max Ammo must refill them instead of throwing RangeError mid-game.
+    const player = deepFreeze({
+      ammo: {
+        m1911: { mag: 0, reserve: 0 },
+        raygun: { mag: 1, reserve: 2 },
+        bar: { mag: 3, reserve: 4 },
+        trench: { mag: 0, reserve: 0 },
+      },
+    });
+
+    const next = applyMaxAmmo(player);
+
+    expect(next.ammo.raygun).toEqual({ mag: WEAPONS.raygun.magSize, reserve: WEAPONS.raygun.reserve });
+    expect(next.ammo.bar).toEqual({ mag: WEAPONS.bar.magSize, reserve: WEAPONS.bar.reserve });
+    expect(next.ammo.trench).toEqual({ mag: WEAPONS.trench.magSize, reserve: WEAPONS.trench.reserve });
+  });
+
+  it("applyMaxAmmo covers every weapon in the WEAPONS table (no id can desync)", () => {
+    // Parity guard: build a player owning one of every weapon, then assert Max Ammo
+    // refills each to its table capacity. Fails the moment WEAPONS gains an id that the
+    // power-up's ammo source of truth doesn't know about.
+    const ids = Object.keys(WEAPONS);
+    const ammo = Object.fromEntries(ids.map((id) => [id, { mag: 0, reserve: 0 }]));
+    const player = deepFreeze({ ammo });
+
+    const next = applyMaxAmmo(player);
+
+    for (const id of ids) {
+      expect(next.ammo[id]).toEqual({ mag: WEAPONS[id].magSize, reserve: WEAPONS[id].reserve });
+    }
   });
 
   it("activate sets only insta-kill and double-points timers, defaulting to 30 seconds", () => {

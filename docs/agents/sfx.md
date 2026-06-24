@@ -23,7 +23,9 @@ module must run and be fully unit-tested under plain Node with no browser global
 // Frozen table of presets, one per game event. Every key below MUST exist.
 // Preset shape is yours, but it is plain JSON-able data (no functions, no AudioContext).
 export const SFX  // keys (exact): shoot, reload, hit, headshot, kill, buy, deny,
-                  //               hurt, groan, door, powerup, roundstart, nuke
+                  //               hurt, groan, door, powerup, roundstart, nuke,
+                  //               snarl, death,                       // Batch 6 zombie voices
+                  //               jingleJugg, jingleSpeed, jingleDoubleTap  // Batch 6 perk jingles
 
 // Expand a preset into a concrete, schedulable Voice. Deterministic when `rng` is seeded.
 buildVoice(name, rng = Math.random) -> Voice
@@ -65,6 +67,10 @@ Rules the renderer relies on (assert these in tests):
 - `door` — low noise rumble, ~0.6s.
 - `powerup` — bright arpeggio; `nuke` — deep boom (noise + low sine), longest voice.
 - `roundstart` — two-note sting.
+- `snarl` — noise + sawtooth rasp (~0.22s) with **rng pitch variation**; played on spawn/lunge.
+- `death` — sine sweep 210→58 Hz + noise tail (~0.56s); played on a zombie kill.
+- `jingleJugg` / `jingleSpeed` / `jingleDoubleTap` — perk-buy stings: a deep sine motif (Jugg),
+  a bright triangle triplet (Speed Cola), and a square double-ping drop (Double Tap).
 
 ## Consumes
 Nothing. Mirror the plain-data, return-new-array discipline of `particles`/`popups`/`shake`.
