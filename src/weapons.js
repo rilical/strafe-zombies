@@ -45,6 +45,45 @@ export const WEAPONS = Object.freeze({
     auto: true,
     price: 1200,
   }),
+  trench: Object.freeze({
+    id: "trench",
+    name: "Trench Gun",
+    damage: 220,
+    rpm: 75,
+    magSize: 6,
+    reserve: 48,
+    reloadMs: 2600,
+    auto: false,
+    price: 1500,
+  }),
+  bar: Object.freeze({
+    id: "bar",
+    name: "B.A.R.",
+    damage: 75,
+    rpm: 500,
+    magSize: 20,
+    reserve: 200,
+    reloadMs: 3000,
+    auto: true,
+    price: 1800,
+  }),
+  // Wonder weapon — box-only, uses projectiles.js for splash damage.
+  raygun: Object.freeze({
+    id: "raygun",
+    name: "Ray Gun",
+    damage: 1000,
+    rpm: 120,
+    magSize: 20,
+    reserve: 160,
+    reloadMs: 2500,
+    auto: false,
+    price: 0,
+    boxOnly: true,
+    projectile: true,
+    splash: 2.0,
+    boltSpeed: 12,
+    boltRange: 18,
+  }),
 });
 
 function weaponFor(id) {
@@ -116,8 +155,8 @@ export function refillAmmo(weaponState) {
   return { ...weaponState, mag: weapon.magSize, reserve: weapon.reserve };
 }
 
-// Grants and equips a wall weapon at full ammo. Points are handled by economy.spend.
-export function buyWallWeapon(player, id) {
+// Internal: grant a weapon at full ammo without any purchase restriction checks.
+function grantWeapon(player, id) {
   return {
     ...player,
     weapon: id,
@@ -128,11 +167,35 @@ export function buyWallWeapon(player, id) {
   };
 }
 
-// Rolls a weapon from the data table using an injected rng() in [0,1), then grants it.
+// Grants and equips a wall weapon at full ammo. Points are handled by economy.spend.
+// Throws a RangeError for boxOnly weapons (e.g. raygun) — those come only from the box.
+export function buyWallWeapon(player, id) {
+  const weapon = weaponFor(id);
+  if (weapon.boxOnly) {
+    throw new RangeError(`${id} is a box-only weapon and cannot be wall-bought`);
+  }
+  return grantWeapon(player, id);
+}
+
+// Mystery box pool with weights. m1911 stays as a wall-only starter; raygun is rare.
+const BOX_POOL = Object.freeze([
+  { id: "kar98k",  weight: 4 },
+  { id: "carbine", weight: 4 },
+  { id: "thompson",weight: 4 },
+  { id: "trench",  weight: 4 },
+  { id: "bar",     weight: 4 },
+  { id: "raygun",  weight: 1 }, // ~4.8% — wonder weapon is deliberately rare
+]);
+const BOX_TOTAL_WEIGHT = BOX_POOL.reduce((s, e) => s + e.weight, 0); // 21
+
+// Rolls a weapon from the weighted box pool using an injected rng() in [0,1).
+// Always deterministic for a given rng sequence; never returns m1911.
 export function rollMysteryBox(player, rng) {
-  const weaponIds = Object.keys(WEAPONS);
-  const roll = rng();
-  const index = Math.min(Math.floor(roll * weaponIds.length), weaponIds.length - 1);
-  const weaponId = weaponIds[index];
-  return { player: buyWallWeapon(player, weaponId), weaponId };
+  let pick = rng() * BOX_TOTAL_WEIGHT;
+  let weaponId = BOX_POOL[BOX_POOL.length - 1].id; // fallback to last entry
+  for (const entry of BOX_POOL) {
+    pick -= entry.weight;
+    if (pick <= 0) { weaponId = entry.id; break; }
+  }
+  return { player: grantWeapon(player, weaponId), weaponId };
 }
