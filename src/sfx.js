@@ -135,6 +135,56 @@ export const SFX = deepFreeze({
       layer("noise", [[0, 260], [0.8, 70]], [[0, 0.75], [0.24, 0.35], [0.8, 0]]),
     ],
   },
+
+  // Zombie spawn/lunge: short sharp rasp — noisy, gritty attack; pitch varies per zombie.
+  snarl: {
+    dur: 0.22,
+    pitchVariance: 0.18,
+    layers: [
+      layer("noise", [[0, 920], [0.06, 560], [0.22, 260]], [[0, 0], [0.015, 0.72], [0.09, 0.48], [0.22, 0]]),
+      layer("sawtooth", [[0, 140], [0.10, 98], [0.22, 74]], [[0, 0], [0.02, 0.38], [0.11, 0.22], [0.22, 0]]),
+    ],
+  },
+
+  // Zombie kill: wet descending gurgle — falling pitch with a noise tail; pitch varies per zombie.
+  death: {
+    dur: 0.56,
+    pitchVariance: 0.14,
+    layers: [
+      layer("sine", [[0, 210], [0.14, 125], [0.56, 58]], [[0, 0], [0.05, 0.52], [0.3, 0.32], [0.56, 0]]),
+      layer("noise", [[0, 380], [0.56, 95]], [[0, 0], [0.07, 0.42], [0.32, 0.2], [0.56, 0]]),
+    ],
+  },
+
+  // Juggernog jingle: sturdy three-note power motif (E3 → G3 → C4) — deep, strong intervals.
+  jingleJugg: {
+    dur: 0.44,
+    layers: [
+      layer("sine",
+        [[0, 165], [0.14, 165], [0.15, 196], [0.29, 196], [0.30, 262], [0.44, 262]],
+        [[0, 0.62], [0.12, 0], [0.15, 0.66], [0.27, 0], [0.30, 0.72], [0.44, 0]]),
+    ],
+  },
+
+  // Speed Cola jingle: bright fast triplet (G4 → B4 → D5) — major third + fifth, high and quick.
+  jingleSpeed: {
+    dur: 0.30,
+    layers: [
+      layer("triangle",
+        [[0, 392], [0.10, 392], [0.11, 494], [0.20, 494], [0.21, 587], [0.30, 587]],
+        [[0, 0.54], [0.08, 0], [0.11, 0.58], [0.18, 0], [0.21, 0.62], [0.30, 0]]),
+    ],
+  },
+
+  // Double Tap jingle: two sharp square pings at A4 then a resolve drop to E4.
+  jingleDoubleTap: {
+    dur: 0.38,
+    layers: [
+      layer("square",
+        [[0, 440], [0.14, 440], [0.15, 440], [0.26, 440], [0.27, 330], [0.38, 330]],
+        [[0, 0.58], [0.11, 0], [0.15, 0.58], [0.23, 0], [0.27, 0.38], [0.38, 0]]),
+    ],
+  },
 });
 
 /**
