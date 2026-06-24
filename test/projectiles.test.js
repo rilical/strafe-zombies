@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { spawnBolt, stepBolt, boltHitsWall, splashTargets } from "../src/projectiles.js";
+import { spawnBolt, stepBolt, boltHitsWall, boltHitsZombie, splashTargets } from "../src/projectiles.js";
 
 // Ray Gun stats used throughout these tests — matches the WEAPONS table entry exactly.
 const RAYGUN = Object.freeze({
@@ -141,5 +141,36 @@ describe("splashTargets — radial damage falloff", () => {
     const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 0, y: 0 };
     const [hit] = splashTargets(bolt, [{ id: "z", x: 1, y: 0 }]);
     expect(hit.dist).toBeCloseTo(1, 10);
+  });
+});
+
+describe("boltHitsZombie — direct-contact detonation", () => {
+  it("is true when a zombie is within the contact radius of the bolt", () => {
+    const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 5, y: 5 };
+    // zombie ~0.3 cells away (inside the default 0.5 contact radius)
+    expect(boltHitsZombie(bolt, [{ id: "z", x: 5.2, y: 5.2 }])).toBe(true);
+  });
+
+  it("is false when every zombie is beyond the contact radius", () => {
+    const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 5, y: 5 };
+    // ~2 cells away — inside splash, but NOT a direct contact (bolt should keep flying)
+    expect(boltHitsZombie(bolt, [{ id: "z", x: 6.4, y: 6.4 }])).toBe(false);
+  });
+
+  it("is false when there are no zombies", () => {
+    const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 5, y: 5 };
+    expect(boltHitsZombie(bolt, [])).toBe(false);
+  });
+
+  it("treats the radius boundary as a hit", () => {
+    const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 0, y: 0 };
+    expect(boltHitsZombie(bolt, [{ id: "z", x: 0.5, y: 0 }], 0.5)).toBe(true);
+  });
+
+  it("honors an explicit (tighter) contact radius", () => {
+    const bolt = { ...spawnBolt(0, 0, 0, RAYGUN), x: 0, y: 0 };
+    const zombies = [{ id: "z", x: 0.4, y: 0 }];
+    expect(boltHitsZombie(bolt, zombies, 0.5)).toBe(true);
+    expect(boltHitsZombie(bolt, zombies, 0.3)).toBe(false);
   });
 });

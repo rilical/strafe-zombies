@@ -127,7 +127,7 @@
   // decal zombies, visible buyable machines, and procedurally textured walls.
   import { createLoadout, equip, swap, activeWeapon } from "./src/loadout.js";
   import { viewmodel } from "./src/viewmodels.js";
-  import { spawnBolt, stepBolt, boltHitsWall, splashTargets } from "./src/projectiles.js";
+  import { spawnBolt, stepBolt, boltHitsWall, boltHitsZombie, splashTargets } from "./src/projectiles.js";
   import { zombieSprite, zombieBands } from "./src/zombieArt.js";
   import { worldProps, propSprite } from "./src/props.js";
   import { wallShade, themeForCell } from "./src/walltex.js";
@@ -585,15 +585,16 @@
       }
     }
 
-    // Ray-Gun bolts: advance each in flight; a bolt that enters a wall cell or reaches its
-    // max range detonates (splash damage + juice). cellBlocked reads the live map (walls +
-    // unopened debris), matching the player's own collision test.
+    // Ray-Gun bolts: advance each in flight; a bolt that strikes a zombie, enters a wall cell,
+    // or reaches its max range detonates (splash damage + juice). The zombie-contact test stops a
+    // direct shot from flying past its target down an open lane and wasting the blast on a far wall.
+    // cellBlocked reads the live map (walls + unopened debris), matching the player's collision test.
     if (bolts.length) {
       const cellBlocked = (cx, cy) => !dynMap[cy] || dynMap[cy][cx] !== 0;
       const live = [];
       for (let bolt of bolts) {
         bolt = stepBolt(bolt, dt);
-        if (boltHitsWall(bolt, cellBlocked) || bolt.dead) detonateBolt(bolt);
+        if (boltHitsWall(bolt, cellBlocked) || boltHitsZombie(bolt, zombies) || bolt.dead) detonateBolt(bolt);
         else live.push(bolt);
       }
       bolts = live;

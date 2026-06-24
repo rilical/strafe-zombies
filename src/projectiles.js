@@ -51,6 +51,25 @@ export function boltHitsWall(bolt, isBlocked) {
 }
 
 /**
+ * Returns true when the bolt is within `radius` cells of any zombie's center — a direct
+ * contact. The integration uses this to detonate a bolt ON the target so the splash blast
+ * is centered on it, instead of letting a direct shot fly past to the far wall (where the
+ * target would sit outside the splash radius and take no damage). This is a tight body-contact
+ * distance, NOT the wider `splash` radius used for the blast falloff.
+ *
+ * @param {object}   bolt     Current bolt position with `.x`, `.y`.
+ * @param {object[]} zombies  Array of `{ id, x, y }` descriptors.
+ * @param {number}   [radius=0.5]  Contact radius in map cells.
+ * @returns {boolean}
+ */
+export function boltHitsZombie(bolt, zombies, radius = 0.5) {
+  for (const zombie of zombies) {
+    if (Math.hypot(zombie.x - bolt.x, zombie.y - bolt.y) <= radius) return true;
+  }
+  return false;
+}
+
+/**
  * Find all zombies within `bolt.splash` cells of the bolt and compute their damage.
  * Damage uses linear falloff: full at the center, zero at the splash radius.
  *
